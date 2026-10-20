@@ -1,5 +1,17 @@
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import {
+  workspaceActionSchema,
+  workspaceExecSchema,
+  workspaceHostInputSchema,
+  workspaceIdentitySchema,
+  workspaceProfileSchema,
+  workspaceStateSchema,
+  workspaceTargetSchema,
+  threadWorkspaceSchema,
+  workspaceTeardownOptionsSchema,
+  workspaceTeardownResultSchema,
+} from "./lib/workspace-schema";
 
 // Restrict option-bearing values before they reach the executable. Commands
 // inside the guest remain argv arrays: no host shell is ever involved.
@@ -30,7 +42,7 @@ export const runSchema = z
     image: imageReference,
     command: argv.default([]),
     cpus: z.number().int().min(1).max(32).default(2),
-    memoryMiB: z.number().int().min(128).max(65536).default(1024),
+    memoryMiB: z.number().int().min(200).max(65536).default(1024),
     workdir: guestPath.optional(),
     env: z
       .array(
@@ -162,6 +174,36 @@ export const metricsSchema = z.object({
 });
 export type Metrics = z.infer<typeof metricsSchema>;
 export const hostContract = defineRpcContract({
+  workspaceTarget: {
+    input: workspaceIdentitySchema,
+    output: workspaceTargetSchema.nullable(),
+  },
+  workspaceTeardown: {
+    input: z
+      .object({
+        config: configSchema,
+        workspace: workspaceTargetSchema,
+        options: workspaceTeardownOptionsSchema,
+      })
+      .strict(),
+    output: workspaceTeardownResultSchema,
+  },
+  workspace: {
+    input: z
+      .object({ config: configSchema, workspace: workspaceHostInputSchema })
+      .strict(),
+    output: workspaceStateSchema,
+  },
+  workspaceExec: {
+    input: z
+      .object({
+        config: configSchema,
+        workspace: workspaceTargetSchema,
+        exec: workspaceExecSchema,
+      })
+      .strict(),
+    output: resultSchema,
+  },
   snapshot: { input: configSchema, output: snapshotSchema },
   metrics: { input: configSchema, output: metricsSchema },
   perform: {
@@ -170,6 +212,67 @@ export const hostContract = defineRpcContract({
   },
 });
 export const rpcContract = defineRpcContract({
+  threadWorkspace: {
+    input: z
+      .object({
+        threadId: z.string().min(1),
+        action: workspaceActionSchema.exclude(["recreate"]).default("status"),
+        inspect: z.boolean().default(true),
+      })
+      .strict(),
+    output: threadWorkspaceSchema.nullable(),
+  },
+  threadWorkspaceLogs: {
+    input: z
+      .object({
+        threadId: z.string().min(1),
+        service: z.string().min(1).max(31),
+      })
+      .strict(),
+    output: resultSchema,
+  },
+  workspaceProjects: {
+    input: z.null(),
+    output: z.array(
+      z
+        .object({
+          id: z.string(),
+          name: z.string(),
+          profile: workspaceProfileSchema.nullable(),
+        })
+        .strict(),
+    ),
+  },
+  saveWorkspaceProfile: {
+    input: z
+      .object({ projectId: z.string().min(1), profile: workspaceProfileSchema })
+      .strict(),
+    output: workspaceProfileSchema,
+  },
+  workspaceEnvironments: {
+    input: z
+      .object({ projectId: z.string().min(1), hostId: z.string().min(1) })
+      .strict(),
+    output: z.array(
+      z
+        .object({
+          id: z.string(),
+          path: z.string(),
+          name: z.string(),
+          isWorktree: z.boolean(),
+        })
+        .strict(),
+    ),
+  },
+  workspace: {
+    input: z
+      .object({
+        environmentId: z.string().min(1),
+        action: workspaceActionSchema,
+      })
+      .strict(),
+    output: workspaceStateSchema,
+  },
   hosts: {
     input: z.null(),
     output: z.object({

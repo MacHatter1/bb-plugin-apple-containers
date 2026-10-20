@@ -142,7 +142,7 @@ export function CreateDialog({
                 Memory (MiB)
                 <Input
                   type="number"
-                  min={128}
+                  min={200}
                   max={65536}
                   value={memory}
                   onChange={(e) => setMemory(e.target.value)}

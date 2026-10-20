@@ -28,8 +28,9 @@ You want a Linux workspace without losing track of what is running on your Mac. 
 | ------------------------- | ---------------------------------------------------------------------- |
 | Runtime visibility        | Health, inventory and live resource charts                             |
 | A container workspace     | Searchable source list, inspector, logs and command console            |
-| Agent access              | Six native tools, a CLI and a bundled skill                            |
+| Agent access              | Ten native tools, a CLI and a bundled skill                            |
 | Correct machine targeting | Commands run on the thread’s environment host, with explicit overrides |
+| Project environments      | One project setup, with separate containers and data for each worktree |
 
 ## Features
 
@@ -66,6 +67,7 @@ Open **Apple Containers** in BB’s navigation. New provider sessions receive th
 | **Images**                                          | Pull, build and run images                                               |
 | **Volumes / Networks**                              | Read-only local inventory                                                |
 | **Settings → Installed plugins → Apple Containers** | Machine default, executable and control settings                         |
+| **Thread header → Containers**                      | This checkout/worktree’s live container status, services, ports, logs and start/stop controls |
 
 ## How it works
 
@@ -84,6 +86,124 @@ flowchart LR
 - **Shared controls.** The dashboard, tools and CLI use the same command validation and ownership rules.
 - **Real measurements.** CPU uses cumulative counter deltas and elapsed time, normalised to allocated virtual CPUs. Network and disk rates use byte-counter deltas. Charts retain up to 60 samples in memory while the page is mounted; the first CPU sample waits for a baseline.
 - **Explicit scope.** The plugin lets agents execute work inside containers. Entire BB provider sessions continue to run on their selected BB machine.
+
+## Project environments
+
+Agents can configure the setup directly: `apple_workspace_setup({})` reads the
+current project's profile, default development configuration and database
+presets. Supplying `{profile: ...}` saves the full setup for that project. The
+bundled skill walks agents through choosing tools, creating local environment
+files, saving the profile, starting services and verifying them. Setup always
+targets the invoking thread's project. Saving does not replace existing
+containers; agents use `apple_workspace` and `apple_workspace_exec` to start and
+work in the environment.
+
+Open **Apple Containers → Projects**, choose a project, and enable
+its container setup. Select a development image containing your tools, a start
+command, the app's container ports, and an optional PostgreSQL or MySQL database.
+Use **Custom services** for other images or multiple services.
+
+Each BB environment—the project checkout or a worktree—gets its own container
+stack, network, automatically allocated loopback ports, and named data volumes.
+Threads sharing an environment reuse that stack. Identity follows the project
+and BB environment IDs, rather than the branch name. Project settings apply
+across Macs, while instances, mounted files, ports and data stay on their Mac.
+
+Configured threads show a cube badge beside the workspace controls. It reports
+Checking, Not started, Starting, Running, Stopping, Stopped, Needs attention, or Unavailable
+from the workspace's observed container state. Click it for service images,
+ports, persistent volume counts, logs, and Start / reuse or Stop controls.
+Open dashboard selects that project, environment and Mac. On narrow screens the
+badge collapses to an accessible cube icon. Status reads never start containers;
+Running describes the containers, so check app readiness before opening its URL.
+Threads without a project setup or existing workspace binding have no badge.
+The badge reads the saved setup first, so it remains visible as Checking while
+the Mac responds. Status inspection does not wait behind long container commands.
+
+The agent and Git remain on the Mac. The app container mounts that workspace
+read/write at `/workspace`; `apple_workspace_exec` runs development commands
+there. With **Start when an agent begins work**, thread activity starts the
+stack in the background. Project-specific instructions tell agents to await
+`apple_workspace` before running app commands. Startup and explicit commands
+are serialized per workspace, so concurrent threads reuse one instance.
+If automatic startup fails, the agent tool or **Start / reuse** reports the error.
+Worktree Git metadata can live outside the mounted folder, so tooling that
+requires Git metadata must run on the Mac or receive version information from it.
+
+The default development command is `sleep infinity`: it keeps tools available
+without assuming how to start your application. For a Node development server,
+for example, use `sh -lc 'npm ci && npm run dev -- --hostname 0.0.0.0'` with a
+compatible image. The default Node profile uses a separate named volume for
+`/workspace/node_modules`, keeping Linux dependencies off the Mac checkout.
+Custom toolchains can use an image built from the existing **Images** view.
+
+Credentials are read through `--env-file` from an ignored file **inside each
+workspace**. The project setup stores only its relative filename, never the
+file's contents. Symlinks escaping the workspace are rejected. For PostgreSQL,
+the database file needs `POSTGRES_PASSWORD` and optionally `POSTGRES_DB`; for
+MySQL, `MYSQL_ROOT_PASSWORD` and optionally `MYSQL_DATABASE`. Create these files
+locally. If appropriate for your project, list the filenames in BB's tracked
+`.worktreeinclude` to copy them to future worktrees. The plugin never copies
+seed snapshots, automatically restores databases, or connects to a live database.
+
+Database presets wait for a TCP readiness check before starting the app.
+They initialize data in a subdirectory of the volume, avoiding the volume's
+filesystem metadata at its root.
+Services inject `<SERVICE_NAME>_HOST` and `<SERVICE_NAME>_PORT` into the app;
+the `database` preset supplies `DATABASE_HOST` and `DATABASE_PORT`. These use
+the guest network address and the first configured service port. Configure your
+app to read them (or map them in its start command); no source or `.env` file is
+rewritten. New instances start with fresh database volumes; initial data and
+migrations remain your project's setup commands. Other than configured
+readiness commands, running containers do not prove the app is ready.
+
+**Stop** keeps containers and data. **Apply saved setup** replaces this
+workspace's containers using the latest project settings, retaining named
+volumes. Existing instances keep their original recipe until that explicit
+action. Changing service or volume names creates new volumes and leaves the
+old ones intact; database image upgrades still need an appropriate migration.
+If a service's guest address changes after a restart, the plugin asks you to
+apply the setup again instead of silently replacing the app container.
+Resources created only inside a container's root filesystem are lost on
+replacement, so put persistent data in named volumes or the workspace mount.
+
+Archiving a thread does not directly stop a stack. After BB actually removes
+its environment, the plugin stops that stack and retains its containers,
+network and volumes; it retries missed/offline cleanup every minute. Disabling
+or reloading the plugin leaves containers running. It never prunes database
+data automatically. The dashboard's existing inspector provides logs and
+individual container controls. Ports displayed here refer to the selected Mac.
+
+```sh
+bb apple-containers workspace up
+bb apple-containers workspace status --json
+bb apple-containers workspace stop
+bb apple-containers workspace teardown --dry-run --json
+bb apple-containers workspace teardown
+# Explicitly delete persistent workspace data too:
+bb apple-containers workspace teardown --remove-volumes
+# Explicitly replace containers, keeping named data volumes:
+bb apple-containers workspace recreate
+```
+
+These commands use the invoking thread's BB environment. Outside a thread,
+pass `--environment <environment-id>`. The workspace commands resolve the
+machine from that environment; they do not accept an unrelated host override.
+
+Agents receive `apple_workspace_teardown` and instructions to call it after
+finishing container work, unless the user or repository needs the runtime kept
+running. Default teardown removes this environment's owned containers (including
+writable root filesystems) and network. Named volumes and shared images remain;
+the result lists retained volumes. `--remove-volumes` also deletes this
+environment's persistent databases and caches, including older recipe volumes.
+It requires explicit intent to delete that data. `--dry-run` previews resource
+names without changes. Source files and other worktrees are left alone.
+
+Teardown refuses while another thread in the same BB environment is active,
+starting, stopping or pending, or while a workspace command is in progress. The
+calling thread is excluded. This is a thread-state check; a new thread can start
+after that check. A later `workspace up` reuses retained volume names. Cleanup
+errors may leave a partial stack; inspect status and preview before retrying.
 
 ## Container controls
 
@@ -127,7 +247,7 @@ Operational commands accept `--host <id>` and `--json`. Run also accepts `--cpus
 
 </details>
 
-**Agent tools:** `apple_container_status`, `apple_container_run`, `apple_container_exec`, `apple_container_read`, `apple_container_manage`, `apple_container_image`. Optional `hostId` targets another enrolled Mac. The bundled [skill](skills/apple-containers/SKILL.md) documents schemas, CLI use, limits and operating rules.
+**Agent tools:** `apple_container_status`, `apple_container_run`, `apple_container_exec`, `apple_container_read`, `apple_container_manage`, `apple_container_image`, `apple_workspace_setup`, `apple_workspace`, `apple_workspace_exec`, `apple_workspace_teardown`. The six low-level tools accept optional `hostId`; workspace tools always use the invoking thread's project and environment. The bundled [skill](skills/apple-containers/SKILL.md) documents setup, cleanup, schemas, CLI use, limits and operating rules.
 
 The dashboard command fields support quoted arguments without shell expansion. For shell pipelines or scripts, explicitly enter `sh -lc 'your script'`. The console runs individual commands; it is not an interactive PTY.
 
@@ -164,6 +284,8 @@ Containers retain their current state. Use explicit container commands to stop o
 ```sh
 npm ci --include=dev
 npm test
+# Optional real-container integration test (creates and removes its own resources):
+APPLE_CONTAINER_LIVE=1 npx vitest run tests/workspace-live.test.ts
 npm run typecheck
 npm run format:check
 bb plugin build

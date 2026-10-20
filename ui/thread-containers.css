@@ -1,0 +1,304 @@
+.ac-thread-trigger,
+.ac-thread-popover {
+  --ac-thread-dot: var(--muted-foreground);
+  --ac-thread-blue: var(--brand, #3975db);
+  font-family: var(
+    --font-sans,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif
+  );
+  color: var(--foreground);
+  box-sizing: border-box;
+}
+:is(.ac-thread-trigger, .ac-thread-popover)[data-tone="running"] {
+  --ac-thread-dot: var(--success, #198848);
+}
+:is(.ac-thread-trigger, .ac-thread-popover)[data-tone="busy"] {
+  --ac-thread-dot: var(--ac-thread-blue);
+}
+:is(.ac-thread-trigger, .ac-thread-popover)[data-tone="error"] {
+  --ac-thread-dot: var(--warning-text, #b66b00);
+}
+.ac-thread-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ac-thread-trigger:hover,
+.ac-thread-trigger[data-state="open"] {
+  background: var(--accent);
+  border-color: color-mix(in srgb, var(--ac-thread-blue) 40%, var(--border));
+}
+.ac-thread-trigger > svg:first-child {
+  color: var(--ac-thread-blue);
+  flex-shrink: 0;
+}
+.ac-thread-trigger > svg:last-child {
+  transform: rotate(90deg);
+}
+.ac-thread-dot {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ac-thread-dot);
+}
+.ac-thread-count {
+  border-left: 1px solid var(--border);
+  padding-left: 6px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+}
+.ac-thread-trigger[data-compact="true"] {
+  width: 28px;
+  padding: 0;
+  justify-content: center;
+  position: relative;
+}
+.ac-thread-trigger[data-compact="true"] > svg {
+  transform: none;
+}
+.ac-thread-trigger[data-compact="true"] .ac-thread-dot {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  box-shadow: 0 0 0 2px var(--background);
+  width: 5px;
+  height: 5px;
+}
+.ac-thread-popover {
+  z-index: 60;
+  width: 340px;
+  max-width: calc(100vw - 24px);
+  max-height: min(650px, var(--radix-popover-content-available-height, 80vh));
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--popover, var(--background));
+  box-shadow: 0 8px 32px #00000020;
+  font-size: 12px;
+  line-height: 1.5;
+  outline: none;
+}
+.ac-thread-popover * {
+  box-sizing: border-box;
+}
+.ac-thread-heading,
+.ac-thread-service-main,
+.ac-thread-status,
+.ac-thread-footer,
+.ac-thread-logs > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ac-thread-heading,
+.ac-thread-footer,
+.ac-thread-logs > div {
+  justify-content: space-between;
+}
+.ac-thread-heading h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.ac-thread-status {
+  font-size: 10px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  gap: 5px;
+}
+.ac-thread-workspace {
+  margin: 8px 0 2px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.ac-thread-path {
+  margin: 0;
+  font-size: 10px;
+  color: var(--muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ac-thread-services {
+  list-style: none;
+  padding: 0;
+  margin: 13px 0;
+  border-top: 1px solid var(--border);
+}
+.ac-thread-services > li {
+  padding: 11px 0;
+  border-bottom: 1px solid var(--border);
+}
+.ac-thread-service-icon {
+  display: grid;
+  place-items: center;
+  width: 27px;
+  height: 27px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+.ac-thread-service-copy {
+  min-width: 0;
+  flex: 1;
+}
+.ac-thread-service-copy strong {
+  display: block;
+  font-size: 11px;
+  font-weight: 550;
+}
+.ac-thread-service-copy small {
+  display: block;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.ac-thread-service-state {
+  font-size: 10px;
+  color: var(--muted-foreground);
+  text-transform: capitalize;
+  max-width: 75px;
+  overflow-wrap: anywhere;
+}
+.ac-thread-service-state[data-running="true"] {
+  color: var(--success, #198848);
+}
+.ac-thread-icon {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.ac-thread-icon:hover {
+  background: var(--accent);
+  color: var(--foreground);
+}
+.ac-thread-ports {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+  margin: 7px 0 0 35px;
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+.ac-thread-ports a {
+  color: var(--ac-thread-blue);
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.ac-thread-ports a:hover {
+  text-decoration: underline;
+}
+.ac-thread-volume {
+  display: block;
+  margin: 4px 0 0 35px;
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+.ac-thread-note {
+  margin: 9px 0;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.ac-thread-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+.ac-thread-actions button {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
+  color: var(--foreground);
+  padding: 7px 9px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.ac-thread-actions button:hover {
+  background: var(--accent);
+}
+.ac-thread-footer {
+  margin-top: 12px;
+}
+.ac-thread-footer button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted-foreground);
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 10px;
+  padding: 2px 0;
+  cursor: pointer;
+}
+.ac-thread-footer button:hover {
+  color: var(--foreground);
+}
+.ac-thread-popover button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.ac-thread-popover :is(button, a):focus-visible,
+.ac-thread-trigger:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.ac-thread-message {
+  font-size: 11px;
+  margin: 10px 0;
+  overflow-wrap: anywhere;
+}
+.ac-thread-error {
+  color: var(--destructive-text, var(--destructive));
+}
+.ac-thread-logs {
+  margin-block: 12px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.ac-thread-logs strong {
+  font-size: 11px;
+  font-weight: 550;
+}
+.ac-thread-logs pre {
+  margin: 7px 0 0;
+  max-height: 150px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+}

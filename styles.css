@@ -19,6 +19,132 @@
   font-size: 13px;
   container: apple-containers / inline-size;
 }
+.ac-projects {
+  max-width: 1050px;
+  margin: 0 auto;
+  padding: 28px;
+}
+.ac-project-intro {
+  display: flex;
+  gap: 15px;
+  align-items: flex-start;
+  margin-bottom: 24px;
+}
+.ac-project-intro > svg {
+  color: var(--ac-blue);
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+.ac-project-intro h2 {
+  margin: 0 0 6px;
+  font-size: 20px;
+  letter-spacing: -0.5px;
+}
+.ac-project-intro p,
+.ac-project-help {
+  margin: 0;
+  color: var(--ac-dim);
+  line-height: 1.6;
+  max-width: 76ch;
+}
+.ac-project-picker {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  font-weight: 550;
+  margin: 18px 0;
+}
+.ac-projects select,
+.ac-projects textarea {
+  color: var(--foreground);
+  background: var(--ac-surface);
+  border: 1px solid var(--ac-line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  min-width: 0;
+  font: inherit;
+}
+.ac-projects select {
+  max-width: 100%;
+}
+.ac-projects textarea {
+  width: 100%;
+  font-family: ui-monospace, monospace;
+  resize: vertical;
+}
+.ac-project-form {
+  border-block: 1px solid var(--ac-line);
+  padding-block: 20px;
+}
+.ac-project-form .ac-project-check {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+.ac-project-check input {
+  accent-color: var(--ac-blue);
+}
+.ac-project-runtime {
+  padding-top: 24px;
+}
+.ac-project-path {
+  overflow-wrap: anywhere;
+  color: var(--ac-dim);
+  font-size: 12px;
+}
+.ac-project-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-block: 18px;
+}
+.ac-project-service {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding-block: 15px;
+  border-top: 1px solid var(--ac-line);
+}
+.ac-project-service > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+.ac-project-service small {
+  color: var(--ac-dim);
+  overflow-wrap: anywhere;
+}
+.ac-project-endpoints {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ac-project-endpoints code {
+  font-size: 12px;
+}
+.ac-project-storage {
+  width: 100%;
+}
+.ac-projects :is(select, textarea, input):focus-visible {
+  outline: 2px solid var(--ac-blue);
+  outline-offset: 2px;
+}
+@container apple-containers (max-width: 650px) {
+  .ac-projects {
+    padding: 18px;
+  }
+  .ac-project-picker {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .ac-project-service > div:first-child {
+    flex-basis: 100%;
+  }
+}
 .dark .ac-shell,
 [data-theme="dark"] .ac-shell {
   --ac-blue: #50a8ff;

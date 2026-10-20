@@ -126,7 +126,7 @@ it("uses public SDK imports only", async () => {
         /^vitest$/,
         /^@testing-library\/react$/,
         /^react(?:-dom)?$/,
-        /^@radix-ui\/react-(slot|checkbox|dialog)$/,
+        /^@radix-ui\/react-(slot|checkbox|dialog|popover)$/,
         /^(class-variance-authority|clsx|tailwind-merge)$/,
       ],
     },

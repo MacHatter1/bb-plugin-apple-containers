@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
-import { definePluginApp } from "@get-bb/plugin-sdk/app";
+import {
+  definePluginApp,
+  type PluginNavPanelProps,
+} from "@get-bb/plugin-sdk/app";
 import type { ContainerSummary } from "./contract";
 import { CreateDialog, ImageDialog } from "./ui/forms";
 import {
@@ -13,9 +16,15 @@ import { Inspector } from "./ui/inspector";
 import { Monitor } from "./ui/monitor";
 import { useMetrics, useRuntime } from "./ui/use-runtime";
 import "./styles.css";
+import "./ui/thread-containers.css";
+import { ProjectEnvironments } from "./ui/project-environments";
+import { ThreadContainerBadge } from "./ui/thread-containers";
 
-type View = "dashboard" | "containers" | "images" | "volumes" | "networks";
-export function Dashboard() {
+type View =
+  "dashboard" | "projects" | "containers" | "images" | "volumes" | "networks";
+export function Dashboard({ subPath = "" }: PluginNavPanelProps) {
+  const [routeView, routeProjectId, routeEnvironmentId, routeHostId] =
+    subPath.split("/");
   const runtime = useRuntime();
   const {
     hosts,
@@ -29,13 +38,21 @@ export function Dashboard() {
     error,
     notice,
   } = runtime;
-  const [view, setView] = useState<View>("dashboard"),
+  const [view, setView] = useState<View>(
+      routeView === "projects" ? "projects" : "dashboard",
+    ),
     [query, setQuery] = useState(""),
     [filter, setFilter] = useState("all"),
     [selected, setSelected] = useState<string | null>(null),
     [creating, setCreating] = useState(false),
     [runImage, setRunImage] = useState<string | undefined>(),
     [imageDialog, setImageDialog] = useState<"pull" | "build" | null>(null);
+  useEffect(() => {
+    if (routeView === "projects") {
+      setView("projects");
+      if (hosts.some((host) => host.id === routeHostId)) setHostId(routeHostId);
+    }
+  }, [routeView, routeHostId, hosts, setHostId]);
   const running = data?.containers.filter((c) => c.state === "running") ?? [];
   const telemetry = useMetrics(hostId, !!data?.running && running.length > 0);
   useEffect(() => {
@@ -56,6 +73,7 @@ export function Dashboard() {
     ) ?? [];
   const nav: { id: View; label: string; icon: SymbolName; count?: number }[] = [
     { id: "dashboard", label: "Dashboard", icon: "dashboard" },
+    { id: "projects", label: "Project environments", icon: "build" },
     {
       id: "containers",
       label: "Containers",
@@ -188,8 +206,8 @@ export function Dashboard() {
                 }}
               >
                 <Symbol name={n.icon} />
-                <span>{n.label}</span>
-                <small>{n.count ?? "—"}</small>
+                <span>{n.id === "projects" ? "Projects" : n.label}</span>
+                {n.count !== undefined && <small>{n.count}</small>}
               </button>
             ))}
           </nav>
@@ -322,6 +340,18 @@ export function Dashboard() {
                     {w}
                   </p>
                 ))}
+                {view === "projects" && (
+                  <ProjectEnvironments
+                    key={hostId}
+                    hostId={hostId}
+                    initialProjectId={
+                      routeView === "projects" ? routeProjectId : undefined
+                    }
+                    initialEnvironmentId={
+                      routeView === "projects" ? routeEnvironmentId : undefined
+                    }
+                  />
+                )}
                 {view === "dashboard" && (
                   <div className="ac-dashboard">
                     <section className="ac-service-banner">
@@ -721,6 +751,11 @@ export function Dashboard() {
   );
 }
 export default definePluginApp((app) => {
+  app.slots.experimental_threadHeaderAction({
+    id: "containers",
+    title: "Apple Containers",
+    component: ThreadContainerBadge,
+  });
   app.slots.navPanel({
     id: "dashboard",
     title: "Apple Containers",

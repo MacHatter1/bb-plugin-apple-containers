@@ -34,6 +34,7 @@ describe("runtime boundary and command policy", () => {
     { op: "pull", image: "--help" },
     { op: "exec", id: "demo", command: [] },
     { op: "run", name: "demo", image: "alpine", env: ["SECRET"] },
+    { op: "run", name: "demo", image: "alpine", memoryMiB: 128 },
     {
       op: "run",
       name: "demo",
