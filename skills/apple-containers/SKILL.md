@@ -5,6 +5,8 @@ description: Configure project app, database and development-tool containers fro
 
 # Apple Containers
 
+Work in progress (WIP): features, configuration and behaviour are still evolving.
+
 Prefer the native `apple_container_*` tools when available. Check
 `apple_container_status` before starting work. The tools run on the invoking
 thread's environment machine. Supply `hostId` explicitly to target another Mac.

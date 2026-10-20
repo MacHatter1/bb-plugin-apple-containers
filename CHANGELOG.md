@@ -30,6 +30,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   ownership preflight, shared-thread protection, retained volumes by default and
   explicit persistent-data removal. Task-completion guidance is bundled.
 
+### Changed
+
+- Mark the README, package descriptions, draft listing and bundled skill as
+  work in progress (WIP).
+- Align the README with the repository standard, including feature panels,
+  expandable project setup guidance and the complete workspace command list.
+
 ### Fixed
 
 - Reject project setups whose service and volume names resolve to the same

@@ -8,7 +8,7 @@
   },
   "bb": {
     "name": "Apple Containers",
-    "description": "Manage Apple containers in BB with a live dashboard, agent tools and machine-aware CLI controls.",
+    "description": "Work in progress: Apple containers, project environments and native tools for BB.",
     "branding": {
       "icon": "./assets/icon.svg",
       "logo": {
@@ -60,7 +60,7 @@
     "vaul": "^1.1.2",
     "vitest": "^5.0.5"
   },
-  "description": "Manage Apple containers in BB with a live dashboard, agent tools and machine-aware CLI controls.",
+  "description": "Work in progress: Apple containers, project environments and native tools for BB.",
   "license": "MIT",
   "scripts": {
     "build": "bb plugin build",

@@ -5,20 +5,23 @@
 
 ### Your Mac’s containers, ready for your BB agents.
 
-A container workspace inside BB, with live monitoring and a focused inspector.<br>
-Create Linux containers, build images and run commands from the dashboard or your agents.
+**Work in progress (WIP).** Features, configuration and behaviour are still evolving.
+
+Manage your Mac’s Linux containers from BB, with live monitoring and a focused inspector.<br>
+Give your project checkouts and worktrees their own app, database and development tools.
 
 ![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue)
 ![bb ≥ 0.46](https://img.shields.io/badge/bb-%E2%89%A5%200.46-0284c7)
 ![Plugin SDK ≥ 0.6.49](https://img.shields.io/badge/plugin%20sdk-%E2%89%A5%200.6.49-0f766e)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript&logoColor=white)
 
-[Features](#features) · [Install](#install) · [CLI](#cli) · [Settings](#settings) · [Development](#development)
+[Features](#features) · [Install](#install) · [How it works](#how-it-works) · [CLI](#cli) · [Settings](#settings) · [Development](#development)
 
-<img src="docs/screenshots/dashboard.jpg" alt="Apple Containers dashboard with runtime health, resource inventory and live CPU, memory, network and disk charts" width="1000">
+<img src="docs/screenshots/dashboard.jpg" alt="Apple Containers dashboard with runtime health, resource inventory and live CPU, memory, network and disk charts" width="900">
 </div>
 
-The screenshots show a disposable demonstration container in the real BB plugin. The machine name is anonymised. The dark capture uses browser-local theme tokens without changing BB’s saved appearance.
+> [!NOTE]
+> These are real BB captures of a disposable demonstration workload, with fictional machine labels and observed metrics. They show an earlier WIP interface. The dark capture uses browser-local theme tokens without changing BB’s saved appearance.
 
 ## The problem
 
@@ -34,13 +37,71 @@ You want a Linux workspace without losing track of what is running on your Mac. 
 
 ## Features
 
-|                                                                                                                                                                                                  |                                                                                                                                      |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| **Live monitoring.** CPU, memory, network receive and disk read charts sampled every five seconds while the page is visible. Send/write rates appear alongside them.                             | **Container inspector.** Select a container to see configuration, networking, resource history, logs and a command console.          |
-| **Create and control.** A creation sheet accepts commands, CPU/memory limits, ports, environment variables and an optional read-only folder mount. Start, stop and delete individual containers. | **Image library.** Pull an OCI image, build a Dockerfile on your Mac, or run a container directly from a local image.                |
-| **Resource navigation.** Dedicated dashboard, containers, images, networks and volumes views. The sidebar and split view adapt to narrower panes.                                                | **Agent tools.** Agents can check health, create containers, execute guest commands, read logs and manage images on the correct Mac. |
+<table>
+<tr>
+<td width="50%" valign="top">
 
-<p align="center"><img src="docs/screenshots/containers-light.jpg" alt="Light container workspace with source list, live resource charts and configuration" width="49%"> <img src="docs/screenshots/containers-dark.jpg" alt="Dark container workspace showing the same running demonstration container" width="49%"></p>
+### 📊 Live monitoring
+
+Check service health, browse resources and follow measured CPU, memory,
+network and disk I/O. Charts sample every five seconds while the page is visible.
+
+</td>
+<td width="50%" valign="top">
+
+### 📦 Container workspace
+
+Create containers, choose CPU and memory limits, and configure ports and mounts.
+Inspect configuration, read logs and run commands from a focused source list.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+### 🖼️ Image library
+
+Pull OCI images, build a Dockerfile on the selected Mac, or run a local image.
+Browse networks and named volumes without bulk removal controls.
+
+</td>
+<td valign="top">
+
+### 🌱 Project environments
+
+Save an app and service setup once. Each checkout or worktree gets its own
+containers, network, loopback ports and persistent volumes.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+### 🧊 Thread status
+
+See the current workspace’s container state in its thread header. Open service
+images, ports and logs, or start and stop the stack from the badge.
+
+</td>
+<td valign="top">
+
+### 🛠️ CLI and native tools
+
+Use the same validated controls from the dashboard, CLI or your BB sessions.
+Commands resolve the workspace’s Mac; Git and provider sessions stay on the host.
+
+</td>
+</tr>
+</table>
+
+<div align="center">
+<table>
+<tr>
+<td align="center"><img src="docs/screenshots/containers-light.jpg" alt="Light container workspace with a demonstration container, resource charts and configuration" width="440"><br><sub><b>Container inspector in light appearance</b></sub></td>
+<td align="center"><img src="docs/screenshots/containers-dark.jpg" alt="Dark container workspace showing the demonstration container and observed resource charts" width="440"><br><sub><b>The same workspace in dark appearance</b></sub></td>
+</tr>
+</table>
+</div>
 
 The interface draws on [Davit](https://davit.app), [Orchard](https://github.com/andrew-waters/orchard) and [ContainerUI](https://github.com/kylemclaren/container-ui). It is implemented for BB’s web extension surface; it does not embed those apps.
 
@@ -51,7 +112,7 @@ From this local checkout:
 ```sh
 npm ci --include=dev
 bb plugin build
-bb plugin install . --yes
+bb plugin install "path:$PWD" --yes
 ```
 
 Open **Apple Containers** in BB’s navigation. New provider sessions receive the native tools and bundled skill.
@@ -60,13 +121,14 @@ Open **Apple Containers** in BB’s navigation. New provider sessions receive th
 
 ## Where to find it
 
-| Where                                               | What                                                                     |
-| --------------------------------------------------- | ------------------------------------------------------------------------ |
-| **Apple Containers → Dashboard**                    | Runtime health, inventories and recent resource history                  |
-| **Containers**                                      | Source list, live inspector, logs, command console and raw configuration |
-| **Images**                                          | Pull, build and run images                                               |
-| **Volumes / Networks**                              | Read-only local inventory                                                |
-| **Settings → Installed plugins → Apple Containers** | Machine default, executable and control settings                         |
+| Where                                               | What                                                                                          |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| **Apple Containers → Dashboard**                    | Runtime health, inventories and recent resource history                                       |
+| **Containers**                                      | Source list, live inspector, logs, command console and raw configuration                      |
+| **Images**                                          | Pull, build and run images                                                                    |
+| **Apple Containers → Projects**                     | Save project setups and start, inspect, stop or replace workspace instances                   |
+| **Volumes / Networks**                              | Read-only local inventory                                                                     |
+| **Settings → Installed plugins → Apple Containers** | Machine default, executable and control settings                                              |
 | **Thread header → Containers**                      | This checkout/worktree’s live container status, services, ports, logs and start/stop controls |
 
 ## How it works
@@ -82,12 +144,14 @@ flowchart LR
     Metrics --> Dashboard
 ```
 
-- **Machine-aware.** Native tools and CLI calls in a thread default to its environment host. Outside a thread, supply `--host`, configure a default, or have exactly one enrolled host.
+- **Machine-aware.** Low-level tools and CLI calls in a thread default to its environment host. Outside a thread, supply `--host`, configure a default, or have exactly one enrolled host.
 - **Shared controls.** The dashboard, tools and CLI use the same command validation and ownership rules.
 - **Real measurements.** CPU uses cumulative counter deltas and elapsed time, normalised to allocated virtual CPUs. Network and disk rates use byte-counter deltas. Charts retain up to 60 samples in memory while the page is mounted; the first CPU sample waits for a baseline.
 - **Explicit scope.** The plugin lets agents execute work inside containers. Entire BB provider sessions continue to run on their selected BB machine.
+- **Worktree reuse.** Threads in the same checkout or worktree share its stack. Workspace commands resolve the thread’s environment; outside a thread, pass `--environment <id>`.
 
-## Project environments
+<details>
+<summary><b>Project setups, worktrees and cleanup</b></summary>
 
 Agents can configure the setup directly: `apple_workspace_setup({})` reads the
 current project's profile, default development configuration and database
@@ -125,7 +189,7 @@ read/write at `/workspace`; `apple_workspace_exec` runs development commands
 there. With **Start when an agent begins work**, thread activity starts the
 stack in the background. Project-specific instructions tell agents to await
 `apple_workspace` before running app commands. Startup and explicit commands
-are serialized per workspace, so concurrent threads reuse one instance.
+are serialised per workspace, so concurrent threads reuse one instance.
 If automatic startup fails, the agent tool or **Start / reuse** reports the error.
 Worktree Git metadata can live outside the mounted folder, so tooling that
 requires Git metadata must run on the Mac or receive version information from it.
@@ -153,15 +217,16 @@ Services inject `<SERVICE_NAME>_HOST` and `<SERVICE_NAME>_PORT` into the app;
 the `database` preset supplies `DATABASE_HOST` and `DATABASE_PORT`. These use
 the guest network address and the first configured service port. Configure your
 app to read them (or map them in its start command); no source or `.env` file is
-rewritten. New instances start with fresh database volumes; initial data and
-migrations remain your project's setup commands. Other than configured
-readiness commands, running containers do not prove the app is ready.
+rewritten. Each workspace has its own database volumes; later starts reuse
+retained data. Initial data and migrations remain your project's setup commands.
+Other than configured readiness commands, running containers do not prove the
+app is ready.
 
 **Stop** keeps containers and data. **Apply saved setup** replaces this
 workspace's containers using the latest project settings, retaining named
 volumes. Existing instances keep their original recipe until that explicit
-action. Changing service or volume names creates new volumes and leaves the
-old ones intact; database image upgrades still need an appropriate migration.
+action. Changes to service or volume names can create new volumes; old ones
+remain intact. Database image upgrades still need an appropriate migration.
 If a service's guest address changes after a restart, the plugin asks you to
 apply the setup again instead of silently replacing the app container.
 Resources created only inside a container's root filesystem are lost on
@@ -205,10 +270,12 @@ calling thread is excluded. This is a thread-state check; a new thread can start
 after that check. A later `workspace up` reuses retained volume names. Cleanup
 errors may leave a partial stack; inspect status and preview before retrying.
 
-## Container controls
+</details>
+
+## Safe by default
 
 - **Ownership protection.** Start, stop, delete and exec require `app.getbb.apple-containers.managed=true` by default. Reads include external containers. This is an accidental-change guard for a shared Mac user, not an isolation boundary between agents.
-- **Explicit access.** Mounts default to read-only. Published ports bind to `127.0.0.1`. No host shell, implicit environment inheritance into guests, SSH forwarding, bulk prune or forced container deletion is exposed.
+- **Explicit access.** Manual mounts default to read-only; project app containers mount their workspace read/write. Published ports bind to `127.0.0.1`. No host shell, implicit environment inheritance into guests, SSH forwarding, bulk prune or forced container deletion is exposed.
 - **Predictable lifetime.** Disabling/reloading the plugin leaves containers running. No Apple software or kernel is installed automatically.
 - **Bounded output.** Processes retain 256 KiB across stdout/stderr. Dashboard lists retain 500 records each; tool responses retain 48,000 characters. Clipping is labelled, and clipped JSON is rejected.
 - **Cancellation.** Timeout/cancellation terminates and reaps the CLI. A guest command or runtime operation may continue; inspect state before retrying. Mutations are not automatically retried. Run, pull and build allow ten minutes; exec defaults to 60 seconds, configurable from 1–600.
@@ -228,22 +295,28 @@ bb apple-containers delete workspace
 <details>
 <summary><b>All commands</b></summary>
 
-| Command                                 | Purpose                                                     |
-| --------------------------------------- | ----------------------------------------------------------- |
-| `hosts`                                 | List BB machine IDs                                         |
-| `status`                                | Runtime health and complete inventory snapshot              |
-| `list`                                  | List running and stopped containers                         |
-| `run <image> --name <name> -- [argv…]`  | Create a detached managed container                         |
-| `exec <id> -- [argv…]`                  | Execute a command in a managed container                    |
-| `logs <id> --lines 200`                 | Read the log tail                                           |
-| `inspect <id>` / `stats <id>`           | Read configuration or one resource snapshot                 |
-| `start <id>` / `stop <id>`              | Control one container                                       |
-| `delete <id>`                           | Delete one stopped container                                |
-| `pull <image>`                          | Pull an OCI image                                           |
-| `build /absolute/context --tag app:dev` | Build from a Dockerfile                                     |
-| `system start`                          | Start the service without automatically installing a kernel |
+| Command                                 | Purpose                                                       |
+| --------------------------------------- | ------------------------------------------------------------- |
+| `hosts`                                 | List BB machine IDs                                           |
+| `status`                                | Runtime health and complete inventory snapshot                |
+| `list`                                  | List running and stopped containers                           |
+| `run <image> --name <name> -- [argv…]`  | Create a detached managed container                           |
+| `exec <id> -- [argv…]`                  | Execute a command in a managed container                      |
+| `logs <id> --lines 200`                 | Read the log tail                                             |
+| `inspect <id>` / `stats <id>`           | Read configuration or one resource snapshot                   |
+| `start <id>` / `stop <id>`              | Control one container                                         |
+| `delete <id>`                           | Delete one stopped container                                  |
+| `pull <image>`                          | Pull an OCI image                                             |
+| `build /absolute/context --tag app:dev` | Build from a Dockerfile                                       |
+| `system start`                          | Start the service without automatically installing a kernel   |
+| `workspace up` / `workspace status`     | Start or inspect this checkout/worktree's project services    |
+| `workspace stop`                        | Stop workspace containers and keep data                       |
+| `workspace recreate`                    | Apply saved setup, replacing containers and keeping volumes   |
+| `workspace teardown --dry-run --json`   | Preview removal of owned workspace containers and networks    |
+| `workspace teardown`                    | Remove workspace containers and network; retain named volumes |
+| `workspace teardown --remove-volumes`   | Also delete persistent workspace data when explicitly wanted  |
 
-Operational commands accept `--host <id>` and `--json`. Run also accepts `--cpus`, `--memory` (MiB), `--env KEY=value`, `--port host:guest`, `--mount /source:/target[:ro|rw]` and `--workdir`. Exec accepts `--timeout` in seconds. Build accepts `--file /absolute/Dockerfile`. Use command-level `--help` for validated limits.
+Low-level operational commands accept `--host <id>` and `--json`. Workspace commands accept `--environment <id>` and `--json`; they resolve the Mac from that BB environment. Run also accepts `--cpus`, `--memory` (MiB), `--env KEY=value`, `--port host:guest`, `--mount /source:/target[:ro|rw]` and `--workdir`. Exec accepts `--timeout` in seconds. Build accepts `--file /absolute/Dockerfile`. Use command-level `--help` for validated limits.
 
 </details>
 
@@ -252,6 +325,8 @@ Operational commands accept `--host <id>` and `--json`. Run also accepts `--cpus
 The dashboard command fields support quoted arguments without shell expansion. For shell pipelines or scripts, explicitly enter `sh -lc 'your script'`. The console runs individual commands; it is not an interactive PTY.
 
 ## Settings
+
+Use `bb plugin config apple-containers` or **Settings → Installed plugins → Apple Containers**.
 
 <details>
 <summary><b>All settings</b></summary>
@@ -289,7 +364,7 @@ APPLE_CONTAINER_LIVE=1 npx vitest run tests/workspace-live.test.ts
 npm run typecheck
 npm run format:check
 bb plugin build
-bb plugin install . --yes
+bb plugin install "path:$PWD" --yes
 bb plugin dev
 ```
 
@@ -308,7 +383,7 @@ docs/          design notes, verification and screenshots
 
 Tests use real child processes for output limits/cancellation and the public BB SDK harness for routing, schema boundaries, native tools and rendered UI. Live verification covers a disposable container, read-only mounts, loopback ports and the installed BB dashboard. See [verification evidence](docs/VERIFICATION.md) and [design decisions](docs/DESIGN.md).
 
-`PLUGIN_OVERVIEW.md` is the store listing. No remote repository or marketplace release has been created.
+`PLUGIN_OVERVIEW.md` is the draft store listing. Keep its WIP status and claims in step with this README, the bundled skill and `bb.description` in `package.json`. This checkout has no published Git remote or marketplace release.
 
 ## Licence
 
