@@ -62,6 +62,10 @@
   },
   "description": "Work in progress: Apple containers, project environments and native tools for BB.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MacHatter1/bb-plugin-apple-containers.git"
+  },
   "scripts": {
     "build": "bb plugin build",
     "typecheck": "tsc --noEmit",

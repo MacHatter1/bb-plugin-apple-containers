@@ -1,8 +1,6 @@
-# Apple Containers
-
 **Work in progress (WIP).** This plugin is under active development. Features,
 configuration and behaviour are still evolving. This is a draft listing for
-the local checkout.
+the WIP source on GitHub.
 
 Your Mac’s containers, ready for your BB agents.
 
@@ -16,6 +14,6 @@ By default, agents can control only containers created by this plugin. Reads inc
 
 Requirements: BB 0.46+, Plugin SDK 0.6.49+, Apple silicon, macOS 26+ and Apple’s container CLI. Verified with CLI 1.5.0. This supplies container tools; it does not move entire BB provider sessions into Linux containers.
 
-Open Apple Containers in BB’s navigation after installing the local checkout. Native tools appear when a provider session is next constructed.
+Open Apple Containers in BB’s navigation after installing from GitHub or a local checkout. Native tools appear when a provider session is next constructed.
 
 MIT licence. No telemetry or external account is added by this plugin. Image pulls/builds use the registries and network access of Apple’s runtime.

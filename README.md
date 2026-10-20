@@ -107,13 +107,24 @@ The interface draws on [Davit](https://davit.app), [Orchard](https://github.com/
 
 ## Install
 
-From this local checkout:
+Install the WIP source from GitHub:
 
 ```sh
+bb plugin install git:https://github.com/MacHatter1/bb-plugin-apple-containers --yes
+```
+
+<details>
+<summary><b>Install from a local clone</b></summary>
+
+```sh
+git clone https://github.com/MacHatter1/bb-plugin-apple-containers
+cd bb-plugin-apple-containers
 npm ci --include=dev
 bb plugin build
 bb plugin install "path:$PWD" --yes
 ```
+
+</details>
 
 Open **Apple Containers** in BB’s navigation. New provider sessions receive the native tools and bundled skill.
 
@@ -383,7 +394,7 @@ docs/          design notes, verification and screenshots
 
 Tests use real child processes for output limits/cancellation and the public BB SDK harness for routing, schema boundaries, native tools and rendered UI. Live verification covers a disposable container, read-only mounts, loopback ports and the installed BB dashboard. See [verification evidence](docs/VERIFICATION.md) and [design decisions](docs/DESIGN.md).
 
-`PLUGIN_OVERVIEW.md` is the draft store listing. Keep its WIP status and claims in step with this README, the bundled skill and `bb.description` in `package.json`. This checkout has no published Git remote or marketplace release.
+`PLUGIN_OVERVIEW.md` is the draft store listing. Keep its WIP status and claims in step with this README, the bundled skill and `bb.description` in `package.json`. The public GitHub repository contains the WIP source; no marketplace release has been published.
 
 ## Licence
 
