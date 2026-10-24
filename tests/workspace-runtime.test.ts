@@ -22,6 +22,7 @@ import {
 } from "../lib/workspace-schema";
 import type { Runner } from "../lib/process";
 import { success } from "./fixtures";
+import { withContainerLock } from "../lib/container-ownership";
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -156,6 +157,31 @@ function labels(args: string[]) {
     args.flatMap((v, i) => (v === "--label" ? [args[i + 1]!.split("=")] : [])),
   );
 }
+
+it("holds workspace launches behind reclaim's container lock", async () => {
+  const s = await setup();
+  s.target.profile.services = [];
+  const id = `bb-ws-${workspaceKey(s.target)}-app`;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const locked = withContainerLock(id, () => gate);
+  const start = workspaceRuntime(s.target, "ensure", s.directory, s.runner);
+  try {
+    await expect
+      .poll(() =>
+        s.calls.some((args) => args[0] === "network" && args[1] === "create"),
+      )
+      .toBe(true);
+    expect(s.calls.some((args) => args[0] === "run")).toBe(false);
+  } finally {
+    release();
+    await locked;
+    await start;
+  }
+  expect(s.containers.has(id)).toBe(true);
+});
 
 it.each([
   ["db", "backup-data", "db-backup", "data"],

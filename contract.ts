@@ -212,6 +212,9 @@ export const containerSchema = z.object({
   memoryBytes: z.number(),
   addresses: z.array(z.string()),
   ports: z.array(z.string()),
+  /** Configured attachments, including those held by stopped containers. */
+  networks: z.array(z.string()).optional(),
+  volumes: z.array(z.string()).optional(),
   createdAt: z.string(),
 });
 export type ContainerSummary = z.infer<typeof containerSchema>;
@@ -236,6 +239,7 @@ export const snapshotSchema = z.object({
     .record(
       z.string(),
       z.object({
+        projectId: z.string(),
         project: z.string(),
         environment: z.string(),
         removed: z.boolean(),

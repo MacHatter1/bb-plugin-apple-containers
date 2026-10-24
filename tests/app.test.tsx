@@ -449,6 +449,7 @@ it("groups workspace networks and volumes by project and names unused leftovers"
         ...base,
         id: "alpha-app",
         workspaceKey: live,
+        networks: [`bb-ws-${live}`],
         project: { id: "alpha", name: "Alpha" },
       },
     ],
@@ -460,7 +461,12 @@ it("groups workspace networks and volumes by project and names unused leftovers"
     ],
     volumes: [`bb-ws-${removed}-database-data`],
     workspaces: {
-      [removed]: { project: "Alpha", environment: "issue-315", removed: true },
+      [removed]: {
+        projectId: "alpha",
+        project: "Alpha",
+        environment: "issue-315",
+        removed: true,
+      },
     },
   });
   const nav = within(
@@ -490,4 +496,128 @@ it("groups workspace networks and volumes by project and names unused leftovers"
   ).toBeTruthy();
   fireEvent.click(nav.getByRole("button", { name: /^Images/ }));
   expect(await slot.findByText("Used by 1 container")).toBeTruthy();
+});
+
+it("reports a database volume unused when only its workspace app remains", async () => {
+  const key = "d".repeat(24);
+  const volume = `bb-ws-${key}-database-data`;
+  const slot = await setup(false, undefined, {
+    containers: [
+      {
+        ...readySnapshot.containers[0]!,
+        workspaceKey: key,
+        project: { id: "alpha", name: "Alpha" },
+      },
+    ],
+    volumes: [volume],
+  });
+  expect(
+    slot.getByText("1 workspace volume isn’t used by any container."),
+  ).toBeTruthy();
+  fireEvent.click(
+    within(
+      slot.getByRole("navigation", { name: "Container dashboard sections" }),
+    ).getByRole("button", { name: /^Volumes/ }),
+  );
+  expect(
+    within(slot.getByText(volume).closest("li")!).getByText("Unused"),
+  ).toBeTruthy();
+});
+
+it("keeps separate inventory groups for projects with identical display names", async () => {
+  const first = "e".repeat(24),
+    second = "f".repeat(24);
+  const slot = await setup(false, undefined, {
+    containers: [
+      {
+        ...readySnapshot.containers[0]!,
+        id: "first-app",
+        workspaceKey: first,
+        project: { id: "first", name: "Same" },
+      },
+      {
+        ...readySnapshot.containers[0]!,
+        id: "second-app",
+        workspaceKey: second,
+        project: { id: "second", name: "Same" },
+      },
+    ],
+    volumes: [`bb-ws-${first}-db-data`, `bb-ws-${second}-db-data`],
+  });
+  fireEvent.click(
+    within(
+      slot.getByRole("navigation", { name: "Container dashboard sections" }),
+    ).getByRole("button", { name: /^Volumes/ }),
+  );
+  const groups = slot.getAllByRole("region", { name: "Same" });
+  expect(groups).toHaveLength(2);
+  expect(
+    groups.every(
+      (group) => within(group).getAllByRole("listitem").length === 1,
+    ),
+  ).toBe(true);
+});
+
+it("counts actual volume references across workspaces and stopped external containers", async () => {
+  const first = "e".repeat(24),
+    second = "f".repeat(24);
+  const volume = `bb-ws-${first}-database-data`;
+  const slot = await setup(false, undefined, {
+    containers: [
+      {
+        ...readySnapshot.containers[0]!,
+        id: "app",
+        workspaceKey: first,
+        volumes: [],
+        project: { id: "first", name: "Alpha" },
+      },
+      {
+        ...readySnapshot.containers[0]!,
+        id: "external",
+        managed: false,
+        state: "stopped",
+        workspaceKey: second,
+        volumes: [volume],
+      },
+    ],
+    volumes: [volume],
+  });
+  expect(slot.queryByText(/workspace volume isn’t used/)).toBeNull();
+  fireEvent.click(
+    within(
+      slot.getByRole("navigation", { name: "Container dashboard sections" }),
+    ).getByRole("button", { name: /^Volumes/ }),
+  );
+  expect(
+    within(slot.getByText(volume).closest("li")!).getByText("1 container"),
+  ).toBeTruthy();
+});
+
+it("keeps orphan resources separate for same-name projects after their containers disappear", async () => {
+  const first = "e".repeat(24),
+    second = "f".repeat(24);
+  const slot = await setup(false, undefined, {
+    containers: [],
+    networks: [`bb-ws-${first}`, `bb-ws-${second}`],
+    workspaces: {
+      [first]: {
+        projectId: "first",
+        project: "Same",
+        environment: "Project checkout",
+        removed: false,
+      },
+      [second]: {
+        projectId: "second",
+        project: "Same",
+        environment: "old",
+        removed: true,
+      },
+    },
+  });
+  fireEvent.click(
+    within(
+      slot.getByRole("navigation", { name: "Container dashboard sections" }),
+    ).getByRole("button", { name: /^Networks/ }),
+  );
+  expect(slot.getAllByRole("region", { name: "Same" })).toHaveLength(2);
 });

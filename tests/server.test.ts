@@ -230,11 +230,13 @@ describe("BB integration", () => {
     })) as Snapshot;
     expect(state.workspaces).toEqual({
       [key("feature")]: {
+        projectId: "project-a",
         project: "Learn Anything",
         environment: "feature-branch",
         removed: false,
       },
       [key("old")]: {
+        projectId: "project-a",
         project: "Learn Anything",
         environment: "old-branch",
         removed: true,

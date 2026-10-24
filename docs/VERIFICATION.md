@@ -1,5 +1,31 @@
 # Verification
 
+## Reclaim and inventory corrections
+
+Verified on 24 October 2026:
+
+- 151 automated tests passed; the two opt-in live-container tests remain skipped.
+  Type checking, formatting, SDK 0.6.49 compatibility, the plugin build and
+  `git diff --check` passed.
+- Reclaim regressions replace a later target during an earlier deletion and
+  check external replacements, instance and creation changes, ownership changes,
+  restarted containers, unavailable/clipped inspections and missing identity.
+  Name locks keep standalone and workspace launches outside reclaim's
+  inspection/deletion pair, and are shared with standalone cleanup.
+- Inventory checks use configured network and named-volume references, including
+  stopped/external users and volumes shared across workspaces. A surviving app
+  no longer hides an unattached database volume. Project IDs keep identically
+  named projects separate, including resources left after container removal.
+- Rebuilt and reloaded the installed plugin. Saved read-only UI suite
+  `suite_a8cdc35d` passed both flows: dashboard/navigation `run_b6ba77b4` (98)
+  and Storage/cleanup confirmation `run_8a240ec0` (97).
+  Both flows' initial navigation used a healed selector; the remaining eight
+  dashboard steps and six Storage steps passed directly.
+- Race checks use the fake CLI; live checks did not delete containers or volumes.
+  Name locks coordinate this host worker's operations. Apple CLI deletion remains
+  name-based and does not offer an atomic identity-conditional delete against
+  unrelated CLI processes.
+
 ## Current dashboard and Containers grouping
 
 Verified on 24 October 2026 after the dashboard redesign:

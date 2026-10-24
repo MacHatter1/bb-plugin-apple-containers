@@ -17,6 +17,7 @@ import {
   THREAD_LABEL,
   ownerBusy,
   withOwnerLock,
+  withContainerLock,
 } from "./container-ownership";
 
 function record(value: unknown): Record<string, unknown> {
@@ -68,43 +69,45 @@ export async function cleanupAgentContainers(
     if (dryRun) return { ...result, kind: "preview" };
     for (const target of targets) {
       try {
-        signal?.throwIfAborted();
-        const current = async () => {
-          const item = (await read()).find((item) => item.id === target.id);
-          if (
-            item &&
-            (!owns(item) ||
-              item.labels[CLEANUP_LABEL] !== "task" ||
-              item.labels[INSTANCE_LABEL] !== target.labels[INSTANCE_LABEL])
-          )
-            throw new Error("Container ownership changed; left untouched.");
-          return item;
-        };
-        let item = await current();
-        if (item?.state === "running") {
-          const stopped = await runner(["stop", target.id], 60_000, signal);
-          item = await current();
-          if (item && item.state !== "stopped")
-            throw new Error(
-              stopped.stderr ||
-                stopped.stdout ||
-                "Container did not stop; retry cleanup after inspecting it.",
-            );
-        }
-        if (item) {
-          if (item.state !== "stopped")
-            throw new Error(
-              `Container is ${item.state}; retry cleanup after it settles.`,
-            );
-          const deleted = await runner(["delete", target.id], 60_000, signal);
-          if (await current())
-            throw new Error(
-              deleted.stderr ||
-                deleted.stdout ||
-                "Container is still present; retry cleanup.",
-            );
-        }
-        result.removed.push(target.id);
+        await withContainerLock(target.id, async () => {
+          signal?.throwIfAborted();
+          const current = async () => {
+            const item = (await read()).find((item) => item.id === target.id);
+            if (
+              item &&
+              (!owns(item) ||
+                item.labels[CLEANUP_LABEL] !== "task" ||
+                item.labels[INSTANCE_LABEL] !== target.labels[INSTANCE_LABEL])
+            )
+              throw new Error("Container ownership changed; left untouched.");
+            return item;
+          };
+          let item = await current();
+          if (item?.state === "running") {
+            const stopped = await runner(["stop", target.id], 60_000, signal);
+            item = await current();
+            if (item && item.state !== "stopped")
+              throw new Error(
+                stopped.stderr ||
+                  stopped.stdout ||
+                  "Container did not stop; retry cleanup after inspecting it.",
+              );
+          }
+          if (item) {
+            if (item.state !== "stopped")
+              throw new Error(
+                `Container is ${item.state}; retry cleanup after it settles.`,
+              );
+            const deleted = await runner(["delete", target.id], 60_000, signal);
+            if (await current())
+              throw new Error(
+                deleted.stderr ||
+                  deleted.stdout ||
+                  "Container is still present; retry cleanup.",
+              );
+          }
+          result.removed.push(target.id);
+        });
       } catch (cause) {
         result.errors.push({
           id: target.id,

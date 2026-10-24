@@ -180,6 +180,7 @@ export default async function plugin(bb: BbPluginApi) {
             if (project && pending.delete(key)) groups.set(key, project);
             if (project && named.delete(key))
               workspaces[key] = {
+                projectId: project.id,
                 project: project.name,
                 environment: environment.isWorktree
                   ? (environment.branchName ?? environment.name ?? "Worktree")

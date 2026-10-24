@@ -62,3 +62,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Container status reads no longer wait behind long commands in the same
   worktree. Configured badges show Checking before the first runtime read,
   and header effect remounts immediately issue a fresh request.
+- Revalidate stopped-container identity and ownership immediately before reclaim,
+  serialising deletion with other lifecycle commands for that container name.
+- Count network and volume users from their configured attachments, and retain
+  separate inventory groups for projects with identical names.

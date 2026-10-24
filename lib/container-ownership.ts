@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { ContainerOwner } from "../contract";
+import type { Runner } from "./process";
 
 export const THREAD_LABEL = "app.getbb.apple-containers.thread";
 export const PROJECT_LABEL = "app.getbb.apple-containers.project";
@@ -21,6 +22,7 @@ export function ownershipArgs(
 }
 
 const operations = new Map<string, Promise<unknown>>();
+const containerOperations = new Map<string, Promise<unknown>>();
 const ownerKey = (owner: ContainerOwner) =>
   JSON.stringify([owner.projectId, owner.threadId]);
 export function ownerBusy(owner: ContainerOwner) {
@@ -30,13 +32,40 @@ export async function withOwnerLock<T>(
   owner: ContainerOwner,
   run: () => Promise<T>,
 ): Promise<T> {
-  const key = ownerKey(owner);
-  const previous = operations.get(key) ?? Promise.resolve();
+  return withLock(operations, ownerKey(owner), run);
+}
+
+/** Serialise name-based lifecycle operations with reclaim's inspect/delete pair. */
+export async function withContainerLock<T>(id: string, run: () => Promise<T>) {
+  return withLock(containerOperations, id, run);
+}
+
+/** Workspace commands share name locks with standalone lifecycle and reclaim. */
+export function lockContainerCommands(runner: Runner): Runner {
+  return (args, timeout, signal) => {
+    const nameIndex = args[0] === "run" ? args.indexOf("--name") : -1;
+    const id =
+      nameIndex >= 0
+        ? args[nameIndex + 1]
+        : ["start", "stop", "delete"].includes(args[0] ?? "")
+          ? args[1]
+          : undefined;
+    const run = () => runner(args, timeout, signal);
+    return id ? withContainerLock(id, run) : run();
+  };
+}
+
+async function withLock<T>(
+  locks: Map<string, Promise<unknown>>,
+  key: string,
+  run: () => Promise<T>,
+): Promise<T> {
+  const previous = locks.get(key) ?? Promise.resolve();
   const task = previous.catch(() => undefined).then(run);
-  operations.set(key, task);
+  locks.set(key, task);
   try {
     return await task;
   } finally {
-    if (operations.get(key) === task) operations.delete(key);
+    if (locks.get(key) === task) locks.delete(key);
   }
 }

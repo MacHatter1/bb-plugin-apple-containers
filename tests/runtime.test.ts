@@ -116,6 +116,31 @@ describe("runtime boundary and command policy", () => {
     ).toBe("workspace-key");
     expect(summariseContainer(value).workspaceKey).toBeUndefined();
   });
+  it("reads configured networks and named-volume identities, including stopped containers", () => {
+    const value = container();
+    expect(
+      summariseContainer({
+        ...value,
+        configuration: {
+          ...value.configuration,
+          networks: [{ network: "workspace-network" }],
+          mounts: [
+            {
+              source: "/host/volumes/database/volume.img",
+              type: { volume: { name: "database", format: "ext4" } },
+            },
+            {
+              source: "/host/volumes/database/volume.img",
+              type: { volume: { name: "database", format: "ext4" } },
+            },
+            { source: "/host/project", type: { virtiofs: {} } },
+            { source: "tmpfs", type: { tmpfs: {} } },
+          ],
+        },
+        status: { state: "stopped", networks: [] },
+      }),
+    ).toMatchObject({ networks: ["workspace-network"], volumes: ["database"] });
+  });
   it("reports unsupported hosts without launching anything", async () => {
     const runner = vi.fn(async (_args: string[]) => success());
     expect(

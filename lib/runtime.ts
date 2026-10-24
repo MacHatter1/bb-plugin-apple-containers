@@ -2,7 +2,7 @@ import { access, realpath, stat } from "node:fs/promises";
 import { constants } from "node:fs";
 import { isAbsolute } from "node:path";
 import { release } from "node:os";
-import { diskUsageSchema, type DiskUsage } from "../contract";
+import { containerId, diskUsageSchema, type DiskUsage } from "../contract";
 import type {
   CommandResult,
   ContainerCommand,
@@ -16,6 +16,8 @@ import {
   ownershipArgs,
   PROJECT_LABEL,
   THREAD_LABEL,
+  INSTANCE_LABEL,
+  withContainerLock,
 } from "./container-ownership";
 import { runProcess, type Runner } from "./process";
 import { MANAGED_LABEL, runArgs } from "./run-args";
@@ -89,7 +91,32 @@ export function summariseContainer(value: unknown): ContainerSummary {
       const port = obj(p);
       return `${str(port.hostAddress) || "127.0.0.1"}:${num(port.hostPort)}:${num(port.containerPort)}/${str(port.proto) || str(port.protocol) || "tcp"}`;
     }),
+    networks: [
+      ...new Set(
+        array(config.networks)
+          .map((n) => str(obj(n).network))
+          .filter(Boolean),
+      ),
+    ],
+    volumes: [
+      ...new Set(
+        array(config.mounts)
+          .map((mount) => str(obj(obj(obj(mount).type).volume).name))
+          .filter(Boolean),
+      ),
+    ],
   };
+}
+
+function reclaimIdentity(value: unknown) {
+  const config = obj(obj(value).configuration);
+  return JSON.stringify({
+    createdAt: str(config.creationDate),
+    image: obj(config.image),
+    labels: Object.entries(obj(config.labels)).sort(([a], [b]) =>
+      a.localeCompare(b),
+    ),
+  });
 }
 export function commandArgs(
   command: ContainerCommand,
@@ -194,20 +221,55 @@ export async function perform(
         await runner(["list", "--all", "--format", "json"], 30_000, signal),
       );
       const stoppedManaged = values
-        .map(summariseContainer)
+        .map((value) => ({ ...summariseContainer(value), value }))
         .filter(
           (container) =>
             container.managed && container.state.toLowerCase() === "stopped",
         );
+      for (const container of stoppedManaged) containerId.parse(container.id);
       const removed: string[] = [];
       for (const container of stoppedManaged) {
         signal?.throwIfAborted();
-        const result = await runner(["delete", container.id], 60_000, signal);
-        if (!result.ok || result.truncated)
+        try {
+          await withContainerLock(container.id, async () => {
+            signal?.throwIfAborted();
+            const inspected = parseArray(
+              await runner(["inspect", container.id], 30_000, signal),
+            );
+            const current =
+              inspected.length === 1
+                ? summariseContainer(inspected[0])
+                : undefined;
+            const labels = obj(obj(obj(container.value).configuration).labels);
+            if (
+              !current ||
+              current.id !== container.id ||
+              !current.managed ||
+              current.state.toLowerCase() !== "stopped" ||
+              (!container.createdAt && !str(labels[INSTANCE_LABEL])) ||
+              reclaimIdentity(inspected[0]) !== reclaimIdentity(container.value)
+            )
+              throw new Error(
+                `Container ${container.id} changed or is no longer stopped; left untouched. Refresh before retrying.`,
+              );
+            const result = await runner(
+              ["delete", container.id],
+              60_000,
+              signal,
+            );
+            if (!result.ok || result.truncated)
+              throw new Error(
+                result.stderr ||
+                  result.stdout ||
+                  "Container CLI output was clipped.",
+              );
+            removed.push(container.id);
+          });
+        } catch (cause) {
           throw new Error(
-            `Removed ${removed.length} of ${stoppedManaged.length} stopped BB-managed containers before cleanup failed: ${result.stderr || result.stdout || "Container CLI output was clipped."}`,
+            `Removed ${removed.length} of ${stoppedManaged.length} stopped BB-managed containers before cleanup failed: ${cause instanceof Error ? cause.message : String(cause)}`,
           );
-        removed.push(container.id);
+        }
       }
       return {
         ok: true,
@@ -224,21 +286,31 @@ export async function perform(
         "Image and volume cleanup can affect resources created outside BB. Enable external container control in Apple Containers settings before reclaiming them.",
       );
   }
-  if (
-    ["start", "stop", "delete", "exec"].includes(command.op) &&
-    "id" in command &&
-    !config.allowExternal
-  ) {
-    const inspected = parseArray(
-      await runner(["inspect", command.id], 30_000, signal),
-    );
-    if (inspected.length !== 1 || !summariseContainer(inspected[0]).managed) {
-      throw new Error(
-        "This container is not managed by BB. Enable allowExternal in plugin settings to control existing containers.",
+  const execute = async () => {
+    if (
+      ["start", "stop", "delete", "exec"].includes(command.op) &&
+      "id" in command &&
+      !config.allowExternal
+    ) {
+      const inspected = parseArray(
+        await runner(["inspect", command.id], 30_000, signal),
       );
+      if (inspected.length !== 1 || !summariseContainer(inspected[0]).managed) {
+        throw new Error(
+          "This container is not managed by BB. Enable allowExternal in plugin settings to control existing containers.",
+        );
+      }
     }
-  }
-  return runner(commandArgs(command, owner), timeoutFor(command), signal);
+    return runner(commandArgs(command, owner), timeoutFor(command), signal);
+  };
+  const id =
+    command.op === "run"
+      ? command.name
+      : ["start", "stop", "delete", "exec"].includes(command.op) &&
+          "id" in command
+        ? command.id
+        : undefined;
+  return id ? withContainerLock(id, execute) : execute();
 }
 export async function snapshot(
   config: RuntimeConfig,

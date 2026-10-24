@@ -24,6 +24,7 @@ import {
 } from "./workspace-schema";
 import type { Runner } from "./process";
 import type { CommandResult } from "../contract";
+import { lockContainerCommands } from "./container-ownership";
 import {
   MANAGED_LABEL,
   WORKSPACE_LABEL as OWNER,
@@ -165,6 +166,7 @@ export async function workspaceTeardown(
   runner: Runner,
   signal?: AbortSignal,
 ): Promise<WorkspaceTeardownResult> {
+  runner = lockContainerCommands(runner);
   const key = workspaceKey(target);
   return withWorkspaceLock(`${dataDir}:${key}`, async () => {
     signal?.throwIfAborted();
@@ -422,6 +424,7 @@ export async function workspaceRuntime(
   runner: Runner,
   signal?: AbortSignal,
 ): Promise<WorkspaceState> {
+  runner = lockContainerCommands(runner);
   if (action === "ensure" || action === "recreate")
     workspaceSetupProfileSchema.parse(target.profile);
   const key = workspaceKey(target);

@@ -43,10 +43,12 @@ function group(
       });
       continue;
     }
-    const users = members.get(match[1]!) ?? [];
+    const workspaceMembers = members.get(match[1]!) ?? [];
+    const users = resourceUsers(kind, name, containers);
     const info = workspaces[match[1]!];
-    const project =
-      users.find((c) => c.project)?.project?.name ?? info?.project;
+    const linkedProject = workspaceMembers.find((c) => c.project)?.project;
+    const project = linkedProject?.name ?? info?.project;
+    const projectId = linkedProject?.id ?? info?.projectId;
     const checkout = info
       ? `${info.environment === "Project checkout" ? "Project checkout" : `${info.environment} worktree`}${info.removed ? " (removed)" : ""}`
       : undefined;
@@ -62,7 +64,12 @@ function group(
         : "Unused",
       unused: !users.length,
     };
-    if (project) add(`project:${project}`, project, entry);
+    if (project)
+      add(
+        projectId ? `project:${projectId}` : `workspace:${match[1]}`,
+        project,
+        entry,
+      );
     else add(UNKNOWN, "Unknown workspaces", entry);
   }
   const unknown = groups.get(UNKNOWN);
@@ -162,14 +169,22 @@ export function Inventory({
   );
 }
 
-/** Workspace networks or volumes whose containers no longer exist. */
+function resourceUsers(
+  kind: Kind,
+  name: string,
+  containers: ContainerSummary[],
+) {
+  return containers.filter((container) => container[kind]?.includes(name));
+}
+
+/** Workspace networks or volumes without any actual container references. */
 export function unusedWorkspaceNames(
+  kind: Kind,
   names: string[],
   containers: ContainerSummary[],
 ) {
-  const keys = new Set(containers.flatMap((c) => c.workspaceKey ?? []));
   return names.filter((name) => {
     const key = workspaceName.exec(name)?.[1];
-    return !!key && !keys.has(key);
+    return !!key && !resourceUsers(kind, name, containers).length;
   });
 }

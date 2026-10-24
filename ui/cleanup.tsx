@@ -39,8 +39,16 @@ export function Cleanup({
       alive = false;
     };
   }, [rpc, hostId, data.running]);
-  const networks = unusedWorkspaceNames(data.networks, data.containers).length;
-  const volumes = unusedWorkspaceNames(data.volumes, data.containers).length;
+  const networks = unusedWorkspaceNames(
+    "networks",
+    data.networks,
+    data.containers,
+  ).length;
+  const volumes = unusedWorkspaceNames(
+    "volumes",
+    data.volumes,
+    data.containers,
+  ).length;
   const stopped = data.containers.filter(
     (c) => c.managed && c.state === "stopped",
   ).length;
