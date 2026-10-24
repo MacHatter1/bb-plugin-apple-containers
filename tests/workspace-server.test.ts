@@ -460,9 +460,12 @@ it("pins an existing recipe until explicitly replaced and injects instructions o
     (await h.behavior.resolveAgentConfiguration(context)).instructions,
   ).toContain("apple_workspace_exec");
   context.project.id = "unconfigured";
-  expect(
-    (await h.behavior.resolveAgentConfiguration(context)).instructions,
-  ).toBeNull();
+  const instructions = (await h.behavior.resolveAgentConfiguration(context))
+    .instructions;
+  expect(instructions).toContain("apple_container_cleanup");
+  expect(instructions).not.toContain(
+    "This project has a container environment",
+  );
 });
 it.each([false, true])(
   "keeps the original pin after failed replacement (manifest read unavailable: %s)",

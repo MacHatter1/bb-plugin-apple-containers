@@ -15,7 +15,8 @@ import {
 import { success } from "./fixtures";
 import { rpcContract } from "../contract";
 
-beforeAll(() => {
+let app: Awaited<ReturnType<typeof loadPluginApp>>;
+beforeAll(async () => {
   window.HTMLElement.prototype.scrollIntoView = vi.fn();
   window.HTMLElement.prototype.hasPointerCapture = vi.fn(() => false);
   window.HTMLElement.prototype.setPointerCapture = vi.fn();
@@ -25,6 +26,7 @@ beforeAll(() => {
     unobserve() {}
     disconnect() {}
   };
+  app = await loadPluginApp(() => import("../app"));
 });
 const cleanups: (() => void)[] = [];
 afterEach(() => {
@@ -71,7 +73,6 @@ async function setup(
     running,
   compact = false,
 ) {
-  const app = await loadPluginApp(() => import("../app"));
   const slot = renderSlot(
     app.threadHeaderActions[0]!,
     {
@@ -179,8 +180,7 @@ it("shows startup while a shared operation is pending, then stops only the threa
   fireEvent.click(await slot.findByRole("button", { name: "Stop" }));
   await slot.findByRole("button", { name: /Container status: Stopping/ });
   expect(
-    (slot.getByRole("button", { name: "Start / reuse" }) as HTMLButtonElement)
-      .disabled,
+    (slot.getByRole("button", { name: "Start" }) as HTMLButtonElement).disabled,
   ).toBe(true);
   const stopped = structuredClone(running);
   if (stopped.inspection.kind === "observed")

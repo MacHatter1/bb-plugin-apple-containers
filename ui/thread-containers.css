@@ -2,6 +2,12 @@
 .ac-thread-popover {
   --ac-thread-dot: var(--muted-foreground);
   --ac-thread-blue: var(--brand, #3975db);
+  /* Lamp tokens for the shared state glyphs; this popover is portalled
+   * outside the plugin shell, so it maps them to BB's semantic colours. */
+  --ac-lamp: var(--success, #1a7f45);
+  --ac-amber: var(--warning-text, #9a5b00);
+  --ac-harbor: var(--ac-thread-blue);
+  --ac-steel: color-mix(in oklab, var(--foreground) 38%, var(--background));
   font-family: var(
     --font-sans,
     -apple-system,
@@ -141,7 +147,7 @@
   border-top: 1px solid var(--border);
 }
 .ac-thread-services > li {
-  padding: 11px 0;
+  padding: 9px 0;
   border-bottom: 1px solid var(--border);
 }
 .ac-thread-service-icon {
@@ -165,19 +171,27 @@
 }
 .ac-thread-service-copy small {
   display: block;
+  overflow: hidden;
   color: var(--muted-foreground);
+  font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 10px;
-  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .ac-thread-service-state {
-  font-size: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  font-size: 11px;
   color: var(--muted-foreground);
-  text-transform: capitalize;
-  max-width: 75px;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
 }
-.ac-thread-service-state[data-running="true"] {
-  color: var(--success, #198848);
+.ac-thread-service-state[data-tone="running"] {
+  color: var(--ac-lamp);
+}
+.ac-thread-service-state[data-tone="attention"] {
+  color: var(--ac-amber);
 }
 .ac-thread-icon {
   width: 24px;
@@ -199,8 +213,10 @@
 .ac-thread-ports {
   display: flex;
   flex-wrap: wrap;
-  gap: 5px 10px;
-  margin: 7px 0 0 35px;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin: 4px 0 0 35px;
+  font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 10px;
   color: var(--muted-foreground);
 }
@@ -215,8 +231,7 @@
   text-decoration: underline;
 }
 .ac-thread-volume {
-  display: block;
-  margin: 4px 0 0 35px;
+  font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, sans-serif);
   font-size: 10px;
   color: var(--muted-foreground);
 }

@@ -40,6 +40,7 @@ export const runSchema = z
     op: z.literal("run"),
     name: containerId,
     image: imageReference,
+    cleanup: z.enum(["task", "manual"]).optional(),
     command: argv.default([]),
     cpus: z.number().int().min(1).max(32).default(2),
     memoryMiB: z.number().int().min(200).max(65536).default(1024),
@@ -84,38 +85,93 @@ export const execSchema = z
     timeoutSeconds: z.number().int().min(1).max(600).default(60),
   })
   .strict();
-export const commandSchema = z.discriminatedUnion("op", [
-  runSchema,
-  execSchema,
-  z.object({ op: z.literal("pull"), image: imageReference }).strict(),
-  z
-    .object({
-      op: z.literal("build"),
-      context: guestPath,
-      tag: imageReference,
-      file: guestPath.optional(),
-    })
-    .strict(),
-  z.object({ op: z.literal("start"), id: containerId }).strict(),
-  z.object({ op: z.literal("stop"), id: containerId }).strict(),
-  z.object({ op: z.literal("delete"), id: containerId }).strict(),
-  z.object({ op: z.literal("inspect"), id: containerId }).strict(),
-  z
-    .object({
-      op: z.literal("logs"),
-      id: containerId,
-      lines: z.number().int().min(1).max(2000).default(200),
-    })
-    .strict(),
-  z.object({ op: z.literal("stats"), id: containerId }).strict(),
-  z.object({ op: z.literal("system-start") }).strict(),
-]);
+const reclaimCommandSchema = z
+  .object({
+    op: z.literal("reclaim"),
+    target: z.enum([
+      "stopped-containers",
+      "dangling-images",
+      "unused-images",
+      "unattached-volumes",
+    ]),
+    confirmed: z.literal(true),
+    dataLossAcknowledged: z.literal(true).optional(),
+  })
+  .strict();
+export const reclaimSchema = reclaimCommandSchema.refine(
+  (value) =>
+    value.target !== "unattached-volumes" ||
+    value.dataLossAcknowledged === true,
+  {
+    message: "Unattached-volume cleanup requires data-loss acknowledgment.",
+    path: ["dataLossAcknowledged"],
+  },
+);
+export type ReclaimTarget = z.infer<typeof reclaimSchema>["target"];
+export const commandSchema = z
+  .discriminatedUnion("op", [
+    runSchema,
+    execSchema,
+    z.object({ op: z.literal("pull"), image: imageReference }).strict(),
+    z
+      .object({
+        op: z.literal("build"),
+        context: guestPath,
+        tag: imageReference,
+        file: guestPath.optional(),
+      })
+      .strict(),
+    z.object({ op: z.literal("start"), id: containerId }).strict(),
+    z.object({ op: z.literal("stop"), id: containerId }).strict(),
+    z.object({ op: z.literal("delete"), id: containerId }).strict(),
+    z.object({ op: z.literal("inspect"), id: containerId }).strict(),
+    z
+      .object({
+        op: z.literal("logs"),
+        id: containerId,
+        lines: z.number().int().min(1).max(2000).default(200),
+      })
+      .strict(),
+    z.object({ op: z.literal("stats"), id: containerId }).strict(),
+    z.object({ op: z.literal("system-start") }).strict(),
+    reclaimCommandSchema,
+  ])
+  .refine(
+    (command) =>
+      command.op !== "reclaim" ||
+      command.target !== "unattached-volumes" ||
+      command.dataLossAcknowledged === true,
+    {
+      message: "Unattached-volume cleanup requires data-loss acknowledgment.",
+      path: ["dataLossAcknowledged"],
+    },
+  );
 export type ContainerCommand = z.infer<typeof commandSchema>;
 export type RunInput = z.infer<typeof runSchema>;
 export const configSchema = z
   .object({ binaryPath: z.string().max(4096), allowExternal: z.boolean() })
   .strict();
 export type RuntimeConfig = z.infer<typeof configSchema>;
+export const containerOwnerSchema = z
+  .object({
+    threadId: z.string().min(1).max(256),
+    projectId: z.string().min(1).max(256),
+    environmentId: z.string().min(1).max(256).optional(),
+  })
+  .strict();
+export type ContainerOwner = z.infer<typeof containerOwnerSchema>;
+export const containerCleanupResultSchema = z
+  .object({
+    kind: z.enum(["preview", "removed", "partial", "busy"]),
+    planned: z.array(containerId),
+    removed: z.array(containerId),
+    retained: z.array(containerId),
+    errors: z.array(z.object({ id: z.string(), message: z.string() }).strict()),
+  })
+  .strict();
+export type ContainerCleanupResult = z.infer<
+  typeof containerCleanupResultSchema
+>;
 export const resultSchema = z
   .object({
     ok: z.boolean(),
@@ -126,11 +182,32 @@ export const resultSchema = z
   })
   .strict();
 export type CommandResult = z.infer<typeof resultSchema>;
+export const diskResourceUsageSchema = z
+  .object({
+    total: z.number().nonnegative(),
+    active: z.number().nonnegative(),
+    sizeInBytes: z.number().nonnegative(),
+    reclaimable: z.number().nonnegative(),
+  })
+  .strict();
+export const diskUsageSchema = z
+  .object({
+    containers: diskResourceUsageSchema,
+    images: diskResourceUsageSchema,
+    volumes: diskResourceUsageSchema,
+  })
+  .strict();
+export type DiskResourceUsage = z.infer<typeof diskResourceUsageSchema>;
+export type DiskUsage = z.infer<typeof diskUsageSchema>;
 export const containerSchema = z.object({
   id: z.string(),
   image: z.string(),
   state: z.string(),
   managed: z.boolean(),
+  workspaceKey: z.string().optional(),
+  projectId: z.string().optional(),
+  ownerThreadId: z.string().optional(),
+  project: z.object({ id: z.string(), name: z.string() }).optional(),
   cpus: z.number(),
   memoryBytes: z.number(),
   addresses: z.array(z.string()),
@@ -154,6 +231,17 @@ export const snapshotSchema = z.object({
   volumes: z.array(z.string()),
   warnings: z.array(z.string()),
   allowExternal: z.boolean(),
+  /** Names for the project workspaces behind `bb-ws-<key>` networks and volumes. */
+  workspaces: z
+    .record(
+      z.string(),
+      z.object({
+        project: z.string(),
+        environment: z.string(),
+        removed: z.boolean(),
+      }),
+    )
+    .optional(),
 });
 export type Snapshot = z.infer<typeof snapshotSchema>;
 export const metricsSchema = z.object({
@@ -174,6 +262,16 @@ export const metricsSchema = z.object({
 });
 export type Metrics = z.infer<typeof metricsSchema>;
 export const hostContract = defineRpcContract({
+  cleanupContainers: {
+    input: z
+      .object({
+        config: configSchema,
+        owner: containerOwnerSchema,
+        dryRun: z.boolean(),
+      })
+      .strict(),
+    output: containerCleanupResultSchema,
+  },
   workspaceTarget: {
     input: workspaceIdentitySchema,
     output: workspaceTargetSchema.nullable(),
@@ -205,9 +303,16 @@ export const hostContract = defineRpcContract({
     output: resultSchema,
   },
   snapshot: { input: configSchema, output: snapshotSchema },
+  diskUsage: { input: configSchema, output: diskUsageSchema },
   metrics: { input: configSchema, output: metricsSchema },
   perform: {
-    input: z.object({ config: configSchema, command: commandSchema }).strict(),
+    input: z
+      .object({
+        config: configSchema,
+        command: commandSchema,
+        owner: containerOwnerSchema.optional(),
+      })
+      .strict(),
     output: resultSchema,
   },
 });
@@ -282,6 +387,20 @@ export const rpcContract = defineRpcContract({
   snapshot: {
     input: z.object({ hostId: z.string().min(1) }).strict(),
     output: snapshotSchema,
+  },
+  linkContainerProject: {
+    input: z
+      .object({
+        hostId: z.string().min(1).max(256),
+        id: containerId,
+        projectId: z.string().min(1).max(256),
+      })
+      .strict(),
+    output: containerSchema,
+  },
+  diskUsage: {
+    input: z.object({ hostId: z.string().min(1) }).strict(),
+    output: diskUsageSchema,
   },
   metrics: {
     input: z.object({ hostId: z.string().min(1) }).strict(),

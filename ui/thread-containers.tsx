@@ -10,12 +10,12 @@ import {
 import type { rpcContract } from "../contract";
 import type { ThreadWorkspace } from "../lib/workspace-schema";
 import { usePortalScopeProps } from "../lib/portal-scope";
-import { Symbol } from "./elements";
+import { Lamp, stateLabel, stateTone, Symbol } from "./elements";
 import { errorMessage } from "./use-runtime";
 
 type Operation = "ensure" | "stop";
 const scopeNote =
-  "App and development tools run in containers. Agent and Git run on the Mac.";
+  "Threads in this checkout share these containers. The agent and Git stay on the Mac.";
 
 function presentation(
   workspace: ThreadWorkspace | null,
@@ -47,6 +47,11 @@ function presentation(
       ? workspace.inspection.state
       : null;
   if (!state?.configured) return { label: "Not started", tone: "neutral" };
+  if (
+    state.services.length &&
+    state.services.every((s) => s.state === "missing")
+  )
+    return { label: "Not running", tone: "neutral" };
   if (
     state.services.length &&
     state.services.every((s) => s.state === "running")
@@ -217,7 +222,7 @@ function ThreadContainers({
           data-compact={isCompactViewport}
           data-tone={status.tone}
           aria-label={`Container status: ${status.label}${count ? `, ${count} ${count === 1 ? "container" : "containers"}` : ""}. Show details`}
-          title={`${scopeNote} ${status.label}.`}
+          title={`Containers: ${status.label}`}
         >
           <Symbol name="cube" size={15} />
           {!isCompactViewport && <span>Containers</span>}
@@ -265,6 +270,12 @@ function ThreadContainers({
               {message}
             </p>
           )}
+          {!message && status.label === "Not running" && (
+            <p className="ac-thread-message">
+              This checkout’s containers no longer exist. Start creates them
+              again from the saved setup.
+            </p>
+          )}
           {workspace && (
             <ul className="ac-thread-services">
               {workspace.services.map((definition) => {
@@ -276,8 +287,14 @@ function ThreadContainers({
                     ? "App + development tools"
                     : definition.name;
                 const serviceState = unavailable
-                  ? "Unknown"
-                  : (service?.state ?? (busy ? "Starting" : "Not started"));
+                  ? "unknown"
+                  : (service?.state ?? (busy ? "starting" : "not started"));
+                // When the whole stack is gone, each missing service is the
+                // expected state, not a separate warning.
+                const tone =
+                  status.label === "Not running"
+                    ? "stopped"
+                    : stateTone(serviceState);
                 return (
                   <li key={definition.name}>
                     <div className="ac-thread-service-main">
@@ -289,13 +306,16 @@ function ThreadContainers({
                       </span>
                       <span className="ac-thread-service-copy">
                         <strong>{label}</strong>
-                        <small>{definition.image}</small>
+                        <small title={definition.image}>
+                          {definition.image}
+                        </small>
                       </span>
                       <span
                         className="ac-thread-service-state"
-                        data-running={serviceState === "running"}
+                        data-tone={tone}
                       >
-                        {serviceState}
+                        <Lamp state={serviceState} tone={tone} />
+                        {stateLabel(serviceState)}
                       </span>
                       <button
                         className="ac-thread-icon"
@@ -314,7 +334,7 @@ function ThreadContainers({
                         <Symbol name="logs" size={14} />
                       </button>
                     </div>
-                    {!!service?.ports.length && (
+                    {!!(service?.ports.length || service?.volumes.length) && (
                       <div className="ac-thread-ports">
                         {service.ports.map((port) =>
                           definition.name === "app" &&
@@ -333,7 +353,7 @@ function ThreadContainers({
                               }}
                             >
                               localhost:{port.host}
-                              <Symbol name="arrow" size={12} />
+                              <Symbol name="external" size={12} />
                             </a>
                           ) : (
                             <span key={port.guest}>
@@ -341,13 +361,15 @@ function ThreadContainers({
                             </span>
                           ),
                         )}
+                        {!!service.volumes.length && (
+                          <small className="ac-thread-volume">
+                            {service.volumes.length}{" "}
+                            {service.volumes.length === 1
+                              ? "volume"
+                              : "volumes"}
+                          </small>
+                        )}
                       </div>
-                    )}
-                    {!!service?.volumes.length && (
-                      <small className="ac-thread-volume">
-                        {service.volumes.length} persistent{" "}
-                        {service.volumes.length === 1 ? "volume" : "volumes"}
-                      </small>
                     )}
                   </li>
                 );
@@ -382,20 +404,21 @@ function ThreadContainers({
             </p>
           )}
           <p className="ac-thread-note">{scopeNote}</p>
-          <p className="ac-thread-note">
-            Threads in this worktree share these containers. Ports are on its
-            Mac.
-          </p>
           <div className="ac-thread-actions">
             <button
               disabled={busy || !workspace?.enabled}
               onClick={() => void act("ensure")}
             >
-              <Symbol name="play" size={13} />
-              Start / reuse
+              <Symbol name="play" size={12} />
+              Start
             </button>
             <button
-              disabled={busy || !state?.configured}
+              disabled={
+                busy ||
+                !state?.services.some((s) =>
+                  ["running", "stopping"].includes(s.state),
+                )
+              }
               onClick={() => void act("stop")}
             >
               <Symbol name="stop" size={12} />
@@ -417,7 +440,6 @@ function ThreadContainers({
                 }}
               >
                 Open dashboard
-                <Symbol name="arrow" size={12} />
               </button>
             )}
           </div>

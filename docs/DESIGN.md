@@ -1,17 +1,50 @@
 # Apple Containers
 
 The workspace follows the user’s Davit and Orchard references. A source sidebar
-separates dashboard, containers, images, volumes and networks. The dashboard
-groups service health, resource inventory, live monitoring and running containers.
-The container workspace has a searchable source list and a full detail area.
+opens with the runtime's status, then separates the dashboard and projects from
+the runtime's containers, images, volumes, networks and storage. Each view has
+one title, in the toolbar, followed by a one-line description.
 
-The design uses BB’s semantic surfaces and type colours, with blue actions and
-CPU, purple memory, green network and pink disk charts. System sans-serif text
-anchors controls; monospace is reserved for commands and identifiers. Compact
-panes collapse navigation labels and stack the source list above the inspector.
-No replica window chrome or traffic-light controls are added inside BB.
+The dashboard's hero is a yard. Every container is drawn as a box with a
+corrugated side and a door end, parked in a bay for its project. A painted box
+is running and bare steel is stopped; the paint fades when the state changes.
+The door is the start/stop control. Below it, resource use is one panel of four
+small multiples that share a single ink and a five-minute axis. Samples sit in
+fixed slots, so a short history fills in from the right instead of stretching.
 
-The theme’s base tokens adapt light/dark surfaces. The blue action fill has a
+Colour is reserved for meaning on top of BB's semantic surfaces: harbor teal
+(`#0b6f86`, dark `#46b5cc`, taken from the plugin icon) for actions and live
+data, lamp green for running, amber for attention and BB's destructive red.
+Colour mixes use oklab so tints never drift toward the background's hue. State
+lamps differ in shape as well as colour: filled for running, a ring for
+stopped, a dash while changing and a diamond for anything unexpected. System
+sans-serif carries the interface; SF Mono is used only for strings you would
+paste into a terminal, such as names, images, ports, paths and digests. Nothing
+is set below 11px.
+
+Boxes show their first published port and a load line along the bottom edge
+for memory in use against the limit. Each chart labels its ceiling, rounded to
+a 1, 2 or 5 step, so a flat line reads as near zero out of 5% rather than as
+missing data. A Cleanup section appears only when there is something to tidy:
+unused workspace networks and volumes, stopped BB containers or reclaimable
+disk, each linking to the view that handles it.
+
+The New container dialog previews the exact `container run` command it will
+send. `lib/run-args.ts` builds that argv for both the host and the browser, so
+the preview cannot drift from what runs; it is shown one flag per line with
+shell continuations and copies as valid shell.
+
+Images, volumes and networks are plain lists. Networks and volumes group by
+project. The server names the checkout behind each `bb-ws-<key>` resource from
+BB's environment records, including destroyed worktrees, and resources no
+container uses are tagged Unused. Images note how many containers use them. Storage is a ledger in which
+every bar shares one scale, with the reclaimable portion hatched. Projects put
+the shared setup beside the selected Mac's workspaces on wide panes. Compact
+panes collapse navigation to icons and stack the source list above the
+inspector. No replica window chrome or traffic-light controls are added inside
+BB.
+
+The theme’s base tokens adapt light/dark surfaces. The action fill has a
 separate dark value from the lighter chart/selection colour so button text stays
 legible. Focus is visible, reduced motion is respected, and data is not encoded
 only by colour. Charts show only observed samples. CPU requires two samples;
@@ -134,7 +167,8 @@ runtime without provisioning it. Shared worktree operations publish their start
 and completion; status reads are coalesced and never publish refresh events.
 Provisioning stays visible as Starting while host work is pending. A failed
 inventory produces Unavailable, and a partial stack or failed operation needs
-attention. Running reports container process state, not application readiness.
+attention. When every service is missing, the badge reads Not running and the
+popover explains that Start creates the containers again from the saved setup. Running reports container process state, not application readiness.
 Native workspace exec uses this same provisioning lifecycle before launching a
 guest command. Its long-running command does not keep the badge in Starting.
 

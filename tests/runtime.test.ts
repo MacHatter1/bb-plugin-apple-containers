@@ -7,6 +7,7 @@ import {
   snapshot,
   summariseContainer,
   MANAGED_LABEL,
+  WORKSPACE_LABEL,
 } from "../lib/runtime";
 import { container, success } from "./fixtures";
 const config = { binaryPath: "", allowExternal: false };
@@ -98,6 +99,22 @@ describe("runtime boundary and command policy", () => {
       state: "running",
       memoryBytes: 1073741824,
     });
+  });
+  it("retains workspace ownership labels for project grouping", () => {
+    const value = container();
+    expect(
+      summariseContainer({
+        ...value,
+        configuration: {
+          ...value.configuration,
+          labels: {
+            ...value.configuration.labels,
+            [WORKSPACE_LABEL]: "workspace-key",
+          },
+        },
+      }).workspaceKey,
+    ).toBe("workspace-key");
+    expect(summariseContainer(value).workspaceKey).toBeUndefined();
   });
   it("reports unsupported hosts without launching anything", async () => {
     const runner = vi.fn(async (_args: string[]) => success());

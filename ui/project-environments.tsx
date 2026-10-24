@@ -6,7 +6,7 @@ import {
   type WorkspaceProfile,
   type WorkspaceState,
 } from "../lib/workspace-schema";
-import { parseCommand } from "../lib/argv";
+import { formatCommand, parseCommand } from "../lib/argv";
 import { Input } from "../components/ui/input";
 import {
   Dialog,
@@ -15,17 +15,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../components/ui/dialog";
-import { Empty, StateBadge, Symbol } from "./elements";
+import { Empty, Lamp, StateBadge, Symbol } from "./elements";
 import { errorMessage } from "./use-runtime";
 import {
   databasePreset,
   defaultWorkspaceProfile,
 } from "../lib/workspace-presets";
 
-const commandText = (argv: string[]) =>
-  argv
-    .map((v) => (/^[\w./:-]+$/.test(v) ? v : `'${v.replaceAll("'", "'\\''")}'`))
-    .join(" ");
 type Project = { id: string; name: string; profile: WorkspaceProfile | null };
 type Environment = {
   id: string;
@@ -47,7 +43,7 @@ function ProfileForm({
   const [enabled, setEnabled] = useState(original.enabled);
   const [autoStart, setAutoStart] = useState(original.autoStart);
   const [image, setImage] = useState(original.app.image);
-  const [command, setCommand] = useState(commandText(original.app.command));
+  const [command, setCommand] = useState(formatCommand(original.app.command));
   const [ports, setPorts] = useState(original.app.ports.join(", "));
   const [envFile, setEnvFile] = useState(original.app.envFile);
   const [cpus, setCpus] = useState(original.app.cpus);
@@ -118,120 +114,141 @@ function ProfileForm({
       aria-label="Project container setup"
     >
       <div className="ac-section-heading">
-        <h2>Project setup</h2>
-        <span>Inherited by new worktrees</span>
+        <h2>Setup</h2>
+        <span>Shared by every checkout and worktree</span>
       </div>
-      <label className="ac-project-check">
+      <label className="ac-project-enable" data-on={enabled}>
         <input
           type="checkbox"
           checked={enabled}
           disabled={busy}
+          aria-describedby="ac-project-enable-note"
           onChange={(e) => setEnabled(e.target.checked)}
         />
-        Use containers for this project
-      </label>
-      <div className="ac-form-row">
-        <label>
-          Development image
-          <Input
-            required
-            value={image}
-            disabled={busy}
-            onChange={(e) => setImage(e.target.value)}
-          />
-          <small>
-            Use an image containing your project’s tools, or build one in
-            Images.
+        <span>
+          <strong>Use containers for this project</strong>
+          <small id="ac-project-enable-note">
+            {enabled
+              ? "Each checkout and worktree gets its own containers when an agent starts work."
+              : "Off: agents run development commands directly on the Mac."}
           </small>
-        </label>
-        <label>
-          App ports
-          <Input
-            value={ports}
-            disabled={busy}
-            placeholder="3000, 8080"
-            onChange={(e) => setPorts(e.target.value)}
-          />
-          <small>
-            Container ports. Each workspace gets its own host ports.
-          </small>
-        </label>
-      </div>
-      <label>
-        Start command
-        <Input
-          value={command}
-          disabled={busy}
-          onChange={(e) => setCommand(e.target.value)}
-        />
-        <small>
-          Use sleep infinity for a tools container, or sh -lc 'npm ci &amp;&amp;
-          npm run dev -- --hostname 0.0.0.0' to start your app.
-        </small>
+        </span>
       </label>
-      <label>
-        App environment file
-        <Input
-          value={envFile}
-          disabled={busy}
-          placeholder=".env.containers.app (optional)"
-          onChange={(e) => setEnvFile(e.target.value)}
-        />
-        <small>
-          Relative to each worktree. Only the file path is saved here.
-        </small>
-      </label>
-      <div className="ac-form-row">
-        <label>
-          Database
-          <select
-            value={database}
-            disabled={busy}
-            onChange={(e) => setDatabase(e.target.value)}
-          >
-            <option value="none">No database</option>
-            <option value="postgres">PostgreSQL 17</option>
-            <option value="mysql">MySQL 8.4</option>
-            <option value="custom">Custom services</option>
-          </select>
-        </label>
-        {(database === "mysql" || database === "postgres") && (
+      <fieldset className="ac-fieldset">
+        <legend>App container</legend>
+        <div className="ac-form-row">
           <label>
-            Database environment file
+            Development image
             <Input
               required
-              value={databaseEnv}
+              className="ac-mono"
+              value={image}
               disabled={busy}
-              onChange={(e) => setDatabaseEnv(e.target.value)}
+              onChange={(e) => setImage(e.target.value)}
             />
+            <small>
+              An image with your project’s tools. You can build one in Images.
+            </small>
           </label>
-        )}
-      </div>
-      {(database === "mysql" || database === "postgres") && (
-        <p className="ac-project-help">
-          Create this ignored file in the workspace with{" "}
-          {database === "mysql"
-            ? "MYSQL_ROOT_PASSWORD and MYSQL_DATABASE"
-            : "POSTGRES_PASSWORD and POSTGRES_DB"}
-          . The app receives DATABASE_HOST and DATABASE_PORT. Add the file to
-          .worktreeinclude if new worktrees need a copy.
-        </p>
-      )}
-      {database === "custom" && (
+          <label>
+            App ports
+            <Input
+              className="ac-mono"
+              value={ports}
+              disabled={busy}
+              placeholder="3000, 8080"
+              onChange={(e) => setPorts(e.target.value)}
+            />
+            <small>
+              Ports inside the container. Each workspace gets its own Mac ports.
+            </small>
+          </label>
+        </div>
         <label>
-          Services (JSON)
-          <textarea
-            rows={12}
-            value={services}
+          Start command
+          <Input
+            className="ac-mono"
+            value={command}
             disabled={busy}
-            onChange={(e) => setServices(e.target.value)}
+            onChange={(e) => setCommand(e.target.value)}
           />
           <small>
-            Each service has a name, image, optional command, envFile, ports,
-            and named volumes. Credentials stay in workspace files.
+            <code>sleep infinity</code> keeps a tools container open.{" "}
+            <code>
+              sh -lc 'npm ci &amp;&amp; npm run dev -- --hostname 0.0.0.0'
+            </code>{" "}
+            starts an app.
           </small>
         </label>
-      )}
+        <label>
+          App environment file
+          <Input
+            className="ac-mono"
+            value={envFile}
+            disabled={busy}
+            placeholder=".env.containers.app (optional)"
+            onChange={(e) => setEnvFile(e.target.value)}
+          />
+          <small>
+            Relative to each worktree. Only the file path is saved here.
+          </small>
+        </label>
+      </fieldset>
+      <fieldset className="ac-fieldset">
+        <legend id="ac-database-legend">Database</legend>
+        <div className="ac-form-row">
+          <label>
+            <select
+              aria-labelledby="ac-database-legend"
+              value={database}
+              disabled={busy}
+              onChange={(e) => setDatabase(e.target.value)}
+            >
+              <option value="none">No database</option>
+              <option value="postgres">PostgreSQL 17</option>
+              <option value="mysql">MySQL 8.4</option>
+              <option value="custom">Custom services</option>
+            </select>
+          </label>
+          {(database === "mysql" || database === "postgres") && (
+            <label>
+              Database environment file
+              <Input
+                required
+                className="ac-mono"
+                value={databaseEnv}
+                disabled={busy}
+                onChange={(e) => setDatabaseEnv(e.target.value)}
+              />
+            </label>
+          )}
+        </div>
+        {(database === "mysql" || database === "postgres") && (
+          <p className="ac-project-help">
+            Create this ignored file in the workspace with{" "}
+            {database === "mysql"
+              ? "MYSQL_ROOT_PASSWORD and MYSQL_DATABASE"
+              : "POSTGRES_PASSWORD and POSTGRES_DB"}
+            . The app receives DATABASE_HOST and DATABASE_PORT. Add the file to
+            .worktreeinclude if new worktrees need a copy.
+          </p>
+        )}
+        {database === "custom" && (
+          <label>
+            Services (JSON)
+            <textarea
+              rows={12}
+              value={services}
+              disabled={busy}
+              onChange={(e) => setServices(e.target.value)}
+            />
+            <small>
+              Each service has a name, image, optional command, envFile, ports,
+              and named volumes. Credentials stay in workspace files.
+            </small>
+          </label>
+        )}
+      </fieldset>
       <details className="ac-advanced">
         <summary>Resources and startup</summary>
         <div className="ac-form-row">
@@ -269,14 +286,14 @@ function ProfileForm({
         </label>
       </details>
       {error && (
-        <p role="alert" className="ac-warning">
+        <p role="alert" className="ac-error">
           {error}
         </p>
       )}
       <div className="ac-form-footer">
         <span>
-          Saved changes apply to new instances. Use Apply saved setup for an
-          existing workspace.
+          Changes apply to new workspaces. Existing ones keep their containers
+          until you choose Apply saved setup.
         </span>
         <button
           className="ac-button ac-button-primary"
@@ -446,28 +463,14 @@ export function ProjectEnvironments({
     }
   }
   return (
-    <div className="ac-projects">
-      <div className="ac-project-intro">
-        <Symbol name="build" size={25} />
-        <div>
-          <h2>A setup for every worktree</h2>
-          <p>
-            Keep your app, database, and tools together. Each checkout or
-            worktree gets its own containers, ports, and data. Threads in the
-            same workspace share them.
-          </p>
-        </div>
-      </div>
-      {(error || notice || busy) && (
-        <p
-          className={`ac-message ${error ? "ac-message-error" : ""}`}
-          role={error ? "alert" : "status"}
-        >
-          {error || (busy ? "Working on your project environment…" : notice)}
-        </p>
-      )}
+    <div className="ac-page ac-projects">
+      <p className="ac-lede">
+        Give each checkout and worktree its own app, database and tool
+        containers, with separate ports and data. Threads working in the same
+        checkout share them.
+      </p>
       <label className="ac-project-picker">
-        Project
+        <span>Project</span>
         <select
           aria-label="Project"
           value={projectId}
@@ -480,14 +483,33 @@ export function ProjectEnvironments({
             </option>
           ))}
         </select>
+        {selected && (
+          <span className="ac-project-status">
+            <Lamp state={selected.profile?.enabled ? "running" : "stopped"} />
+            {selected.profile?.enabled
+              ? "Containers on"
+              : selected.profile
+                ? "Containers off"
+                : "Not set up"}
+          </span>
+        )}
       </label>
+      {(error || notice || busy) && (
+        <p
+          className="ac-inline-notice"
+          data-tone={error ? "error" : busy ? "busy" : "done"}
+          role={error ? "alert" : "status"}
+        >
+          {error || (busy ? "Working on your project environment…" : notice)}
+        </p>
+      )}
       {!selected ? (
-        <Empty icon="build" title="Choose a project">
+        <Empty icon="projects" title="No projects yet">
           Add a Git project in BB to give its checkouts and worktrees a
           container setup.
         </Empty>
       ) : (
-        <>
+        <div className="ac-projects-layout">
           <ProfileForm
             key={`${selected.id}:${JSON.stringify(selected.profile)}`}
             profile={selected.profile}
@@ -496,11 +518,11 @@ export function ProjectEnvironments({
           />
           <section className="ac-project-runtime">
             <div className="ac-section-heading">
-              <h2>Workspace instances</h2>
-              <span>On the selected Mac</span>
+              <h2>Workspaces</h2>
+              <span>On this Mac</span>
             </div>
             <label className="ac-project-picker">
-              Checkout or worktree
+              <span>Checkout or worktree</span>
               <select
                 aria-label="Checkout or worktree"
                 value={environmentId}
@@ -516,7 +538,9 @@ export function ProjectEnvironments({
               </select>
             </label>
             {currentEnvironment && (
-              <p className="ac-project-path">{currentEnvironment.path}</p>
+              <p className="ac-project-path ac-mono">
+                {currentEnvironment.path}
+              </p>
             )}
             {!environments.length ? (
               <p className="ac-project-help">
@@ -531,14 +555,20 @@ export function ProjectEnvironments({
                     disabled={busy || !selected.profile?.enabled}
                     onClick={() => void action("ensure")}
                   >
-                    <Symbol name="play" size={14} />
-                    Start / reuse
+                    <Symbol name="play" size={12} />
+                    Start
                   </button>
                   <button
                     className="ac-button"
-                    disabled={busy || !state?.configured}
+                    disabled={
+                      busy ||
+                      !state?.services.some((s) =>
+                        ["running", "stopping"].includes(s.state),
+                      )
+                    }
                     onClick={() => void action("stop")}
                   >
+                    <Symbol name="stop" size={12} />
                     Stop
                   </button>
                   <button
@@ -559,48 +589,54 @@ export function ProjectEnvironments({
                     <Symbol name="refresh" size={16} />
                   </button>
                 </div>
-                {state?.services.map((s) => (
-                  <div className="ac-project-service" key={s.id}>
-                    <div>
-                      <strong>
-                        {s.name === "app"
-                          ? "App and development tools"
-                          : s.name}
-                      </strong>
-                      <small>{s.id}</small>
-                    </div>
-                    <StateBadge state={s.state} />
-                    <div className="ac-project-endpoints">
-                      {s.ports.map((p) => (
-                        <code key={p.guest}>
-                          127.0.0.1:{p.host} → {p.guest}
-                        </code>
-                      ))}
-                    </div>
-                    {s.volumes.length > 0 && (
-                      <small className="ac-project-storage">
-                        {s.volumes.length} persistent{" "}
-                        {s.volumes.length === 1 ? "volume" : "volumes"}
-                      </small>
-                    )}
-                  </div>
-                ))}
+                {!!state?.services.length && (
+                  <ul className="ac-project-services">
+                    {state.services.map((s) => (
+                      <li className="ac-project-service" key={s.id}>
+                        <div className="ac-project-service-name">
+                          <strong>
+                            {s.name === "app"
+                              ? "App and development tools"
+                              : s.name}
+                          </strong>
+                          <StateBadge state={s.state} />
+                        </div>
+                        <small className="ac-mono">{s.id}</small>
+                        {(s.ports.length > 0 || s.volumes.length > 0) && (
+                          <div className="ac-project-endpoints">
+                            {s.ports.map((p) => (
+                              <code key={p.guest}>
+                                127.0.0.1:{p.host} → {p.guest}
+                              </code>
+                            ))}
+                            {s.volumes.length > 0 && (
+                              <small>
+                                {s.volumes.length} persistent{" "}
+                                {s.volumes.length === 1 ? "volume" : "volumes"}
+                              </small>
+                            )}
+                          </div>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
                 {state && !state.configured && (
                   <p className="ac-project-help">
-                    Start this workspace to create its containers. Other
-                    worktrees get separate instances automatically when an agent
-                    begins work.
+                    {selected.profile?.enabled
+                      ? "No containers yet. Start creates them; other worktrees get their own when an agent begins work there."
+                      : "Turn on Use containers for this project and save the setup to start workspaces."}
                   </p>
                 )}
                 <p className="ac-project-help">
-                  Ports are on the selected Mac. The agent and Git run on the
-                  Mac; development commands run in /workspace inside the app
-                  container. Stopping containers keeps their volumes.
+                  The agent and Git run on the Mac. Development commands run in{" "}
+                  <code>/workspace</code> inside the app container. Stopping
+                  keeps volumes.
                 </p>
               </>
             )}
           </section>
-        </>
+        </div>
       )}
       <Dialog open={confirm} onOpenChange={setConfirm}>
         <DialogContent className="ac-dialog">
@@ -612,12 +648,12 @@ export function ProjectEnvironments({
               filesystem are removed. Other worktrees are unaffected.
             </DialogDescription>
           </DialogHeader>
-          <div className="ac-project-actions">
+          <div className="ac-dialog-actions">
             <button className="ac-button" onClick={() => setConfirm(false)}>
               Cancel
             </button>
             <button
-              className="ac-button ac-button-primary"
+              className="ac-button ac-button-danger"
               onClick={() => {
                 setConfirm(false);
                 void action("recreate");

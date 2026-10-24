@@ -2,6 +2,7 @@ import { access, realpath, stat } from "node:fs/promises";
 import { constants } from "node:fs";
 import { isAbsolute } from "node:path";
 import { release } from "node:os";
+import { diskUsageSchema, type DiskUsage } from "../contract";
 import type {
   CommandResult,
   ContainerCommand,
@@ -9,11 +10,19 @@ import type {
   RuntimeConfig,
   Snapshot,
   Metrics,
+  ContainerOwner,
 } from "../contract";
+import {
+  ownershipArgs,
+  PROJECT_LABEL,
+  THREAD_LABEL,
+} from "./container-ownership";
 import { runProcess, type Runner } from "./process";
+import { MANAGED_LABEL, runArgs } from "./run-args";
 import { timeoutFor } from "./timeout";
 
-export const MANAGED_LABEL = "app.getbb.apple-containers.managed";
+export { MANAGED_LABEL };
+export const WORKSPACE_LABEL = "app.getbb.apple-containers.workspace";
 type RecordValue = Record<string, unknown>;
 const obj = (v: unknown): RecordValue =>
   v !== null && typeof v === "object" && !Array.isArray(v)
@@ -40,16 +49,35 @@ export function parseArray(result: CommandResult): unknown[] {
     throw new Error("Expected an array from the Apple container CLI.");
   return parsed;
 }
+export function parseDiskUsage(result: CommandResult): DiskUsage {
+  if (!result.ok)
+    throw new Error(
+      result.stderr ||
+        result.stdout ||
+        `Container CLI exited ${result.exitCode}`,
+    );
+  if (result.truncated)
+    throw new Error(
+      "Storage usage output exceeded the output limit; narrow the request using the native CLI.",
+    );
+  return diskUsageSchema.parse(JSON.parse(result.stdout));
+}
 export function summariseContainer(value: unknown): ContainerSummary {
   const root = obj(value),
     config = obj(root.configuration),
     status = obj(root.status),
-    resources = obj(config.resources);
+    resources = obj(config.resources),
+    workspaceKey = str(obj(config.labels)[WORKSPACE_LABEL]),
+    projectId = str(obj(config.labels)[PROJECT_LABEL]),
+    ownerThreadId = str(obj(config.labels)[THREAD_LABEL]);
   return {
     id: str(root.id) || str(config.id),
     image: str(obj(config.image).reference),
     state: str(status.state) || str(root.status) || "unknown",
     managed: obj(config.labels)[MANAGED_LABEL] === "true",
+    ...(workspaceKey ? { workspaceKey } : {}),
+    ...(projectId ? { projectId } : {}),
+    ...(ownerThreadId ? { ownerThreadId } : {}),
     cpus: num(resources.cpus),
     memoryBytes: num(resources.memoryInBytes),
     createdAt: str(config.creationDate),
@@ -63,33 +91,16 @@ export function summariseContainer(value: unknown): ContainerSummary {
     }),
   };
 }
-export function commandArgs(command: ContainerCommand): string[] {
+export function commandArgs(
+  command: ContainerCommand,
+  owner?: ContainerOwner,
+): string[] {
   switch (command.op) {
     case "run":
-      return [
-        "run",
-        "--detach",
-        "--name",
-        command.name,
-        "--label",
-        `${MANAGED_LABEL}=true`,
-        "--cpus",
-        String(command.cpus),
-        "--memory",
-        `${command.memoryMiB}M`,
-        ...command.env.flatMap((e) => ["--env", e]),
-        ...command.ports.flatMap((p) => [
-          "--publish",
-          `127.0.0.1:${p.host}:${p.guest}`,
-        ]),
-        ...command.mounts.flatMap((m) => [
-          "--mount",
-          `type=bind,source=${m.source},target=${m.target}${m.readOnly ? ",readonly" : ""}`,
-        ]),
-        ...(command.workdir ? ["--workdir", command.workdir] : []),
-        command.image,
-        ...command.command,
-      ];
+      return runArgs(
+        command,
+        owner ? ownershipArgs(owner, command.cleanup ?? "task") : [],
+      );
     case "exec":
       return [
         "exec",
@@ -113,6 +124,17 @@ export function commandArgs(command: ContainerCommand): string[] {
       return ["logs", "-n", String(command.lines), command.id];
     case "stats":
       return ["stats", "--no-stream", "--format", "json", command.id];
+    case "reclaim":
+      switch (command.target) {
+        case "stopped-containers":
+          return ["prune"];
+        case "dangling-images":
+          return ["image", "prune"];
+        case "unused-images":
+          return ["image", "prune", "--all"];
+        case "unattached-volumes":
+          return ["volume", "prune"];
+      }
     case "system-start":
       return ["system", "start", "--disable-kernel-install"];
     default:
@@ -164,7 +186,44 @@ export async function perform(
   config: RuntimeConfig,
   runner: Runner,
   signal?: AbortSignal,
+  owner?: ContainerOwner,
 ): Promise<CommandResult> {
+  if (command.op === "reclaim") {
+    if (command.target === "stopped-containers") {
+      const values = parseArray(
+        await runner(["list", "--all", "--format", "json"], 30_000, signal),
+      );
+      const stoppedManaged = values
+        .map(summariseContainer)
+        .filter(
+          (container) =>
+            container.managed && container.state.toLowerCase() === "stopped",
+        );
+      const removed: string[] = [];
+      for (const container of stoppedManaged) {
+        signal?.throwIfAborted();
+        const result = await runner(["delete", container.id], 60_000, signal);
+        if (!result.ok || result.truncated)
+          throw new Error(
+            `Removed ${removed.length} of ${stoppedManaged.length} stopped BB-managed containers before cleanup failed: ${result.stderr || result.stdout || "Container CLI output was clipped."}`,
+          );
+        removed.push(container.id);
+      }
+      return {
+        ok: true,
+        exitCode: 0,
+        stdout: removed.length
+          ? `Removed ${removed.length} stopped BB-managed ${removed.length === 1 ? "container" : "containers"}. Named volumes were kept.`
+          : "No stopped BB-managed containers to reclaim.",
+        stderr: "",
+        truncated: false,
+      };
+    }
+    if (!config.allowExternal)
+      throw new Error(
+        "Image and volume cleanup can affect resources created outside BB. Enable external container control in Apple Containers settings before reclaiming them.",
+      );
+  }
   if (
     ["start", "stop", "delete", "exec"].includes(command.op) &&
     "id" in command &&
@@ -179,7 +238,7 @@ export async function perform(
       );
     }
   }
-  return runner(commandArgs(command), timeoutFor(command), signal);
+  return runner(commandArgs(command, owner), timeoutFor(command), signal);
 }
 export async function snapshot(
   config: RuntimeConfig,
@@ -252,9 +311,9 @@ export async function snapshot(
       );
       continue;
     }
-    if (read.value.length > 500)
+    const values = (read.value as unknown[]).slice(0, 500);
+    if ((read.value as unknown[]).length > 500)
       result.warnings.push(`${label}: showing the first 500 entries.`);
-    const values = read.value.slice(0, 500);
     if (i === 0) result.containers = values.map(summariseContainer);
     if (i === 1)
       result.images = values.map((v) => {

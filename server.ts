@@ -11,12 +11,16 @@ import {
   hostContract,
   rpcContract,
   runSchema,
+  containerOwnerSchema,
+  type ContainerOwner,
+  type ContainerCleanupResult,
   type ContainerCommand,
   type CommandResult,
 } from "./contract";
 export { rpcContract } from "./contract";
 import { timeoutFor } from "./lib/timeout";
 import { createWorkspaceController } from "./lib/workspace-server";
+import { workspaceKey } from "./lib/workspace-runtime";
 import {
   workspaceActionSchema,
   workspaceExecSchema,
@@ -30,6 +34,20 @@ import {
 
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
+const containerProjectLinkSchema = z
+  .object({
+    projectId: z.string().min(1),
+    createdAt: z.string().min(1),
+    image: z.string(),
+  })
+  .strict();
+const containerProjectKey = (hostId: string, id: string) =>
+  `container-project:${JSON.stringify([hostId, id])}`;
+const agentOwnerSchema = containerOwnerSchema
+  .extend({ hostId: z.string().min(1) })
+  .strict();
+const cleanupInstructions =
+  "Containers created with apple_container_run are labelled with this thread and project. Set cleanup=manual when the user or repository requires a container to keep running, including shared or seeded test runtimes. At task completion, call apple_container_cleanup to remove this thread's task containers across every recorded Mac. Use dryRun=true to preview. It preserves containers marked manual, project workspace stacks, named volumes, images, and other threads' containers. A partial or busy result is not success: inspect it and retry when the operation settles. Do not clean up at an intermediate pause or while waiting for user input. Project links alone do not establish cleanup ownership; legacy containers are not adopted automatically.";
 export default async function plugin(bb: BbPluginApi) {
   const settings = bb.settings.define({
     binaryPath: {
@@ -51,7 +69,8 @@ export default async function plugin(bb: BbPluginApi) {
     },
     allowExternal: {
       type: "boolean",
-      label: "Allow control of containers created outside this plugin",
+      label:
+        "Allow control of external containers and shared cleanup resources",
       default: false,
     },
     enableAgentTools: {
@@ -65,6 +84,16 @@ export default async function plugin(bb: BbPluginApi) {
     current = next;
   });
   const host = bb.hosts.experimental_client({ contract: hostContract });
+  const projectLinks = new Map<
+    string,
+    z.infer<typeof containerProjectLinkSchema>
+  >();
+  for (const key of await bb.storage.kv.list("container-project:")) {
+    projectLinks.set(
+      key,
+      containerProjectLinkSchema.parse(await bb.storage.kv.get(key)),
+    );
+  }
   async function resolveHost(
     explicit?: string,
     threadId?: string,
@@ -92,23 +121,222 @@ export default async function plugin(bb: BbPluginApi) {
   }
   async function getSnapshot(hostId: string, signal?: AbortSignal) {
     const { binaryPath, allowExternal } = await settings.get();
-    return host.call(
+    const snapshot = await host.call(
       "snapshot",
       { binaryPath, allowExternal },
       { hostId, signal, timeoutMs: 60_000 },
     );
+    const pending = new Set(
+      snapshot.containers.flatMap((c) =>
+        c.managed && c.workspaceKey ? [c.workspaceKey] : [],
+      ),
+    );
+    // Workspace networks and volumes outlive their containers; name them too.
+    const named = new Set(
+      [...snapshot.networks, ...snapshot.volumes].flatMap(
+        (name) => /^bb-ws-([0-9a-f]{24})(?:-|$)/.exec(name)?.[1] ?? [],
+      ),
+    );
+    const linked = new Map(
+      snapshot.containers.flatMap((container) => {
+        const link = projectLinks.get(
+          containerProjectKey(hostId, container.id),
+        );
+        return container.managed && container.projectId
+          ? [[container.id, container.projectId] as const]
+          : container.managed &&
+              link?.createdAt === container.createdAt &&
+              link.image === container.image
+            ? [[container.id, link.projectId] as const]
+            : [];
+      }),
+    );
+    if (!pending.size && !linked.size && !named.size) return snapshot;
+    try {
+      const projects = new Map(
+        (await bb.sdk.projects.list()).map((p) => [
+          p.id,
+          { id: p.id, name: p.name },
+        ]),
+      );
+      const groups = new Map<string, { id: string; name: string }>();
+      const workspaces: NonNullable<typeof snapshot.workspaces> = {};
+      const limit = 500;
+      for (const status of [undefined, "destroyed"] as const) {
+        for (let offset = 0; pending.size || named.size; offset += limit) {
+          const environments = await bb.sdk.environments.list({
+            hostId,
+            limit,
+            offset,
+            ...(status ? { status } : {}),
+            signal,
+          });
+          for (const environment of environments) {
+            const key = workspaceKey({
+              projectId: environment.projectId,
+              environmentId: environment.id,
+            });
+            const project = projects.get(environment.projectId);
+            if (project && pending.delete(key)) groups.set(key, project);
+            if (project && named.delete(key))
+              workspaces[key] = {
+                project: project.name,
+                environment: environment.isWorktree
+                  ? (environment.branchName ?? environment.name ?? "Worktree")
+                  : "Project checkout",
+                removed: environment.lifecycle.phase === "destroyed",
+              };
+          }
+          if (environments.length < limit) break;
+        }
+      }
+      snapshot.containers = snapshot.containers.map((container) => {
+        const project =
+          container.managed && container.workspaceKey
+            ? groups.get(container.workspaceKey)
+            : undefined;
+        const resolved =
+          project ?? projects.get(linked.get(container.id) ?? "");
+        return resolved ? { ...container, project: resolved } : container;
+      });
+      if (Object.keys(workspaces).length) snapshot.workspaces = workspaces;
+    } catch (cause) {
+      snapshot.warnings.push(`Project groups unavailable: ${errorText(cause)}`);
+    }
+    return snapshot;
   }
-  async function execute(hostId: string, input: unknown, signal?: AbortSignal) {
+  async function linkContainerProject(
+    input: {
+      hostId: string;
+      id: string;
+      projectId: string;
+    },
+    signal?: AbortSignal,
+  ) {
+    const { hostId, id, projectId } =
+      rpcContract.linkContainerProject.input.parse(input);
+    const project = await bb.sdk.projects.get({ projectId });
+    const snapshot = await getSnapshot(hostId, signal);
+    const container = snapshot.containers.find(
+      (container) => container.id === id,
+    );
+    if (!container)
+      throw new Error(`Container ${id} was not found on the selected Mac.`);
+    if (!container.managed)
+      throw new Error("Only BB-managed containers can be linked to a project.");
+    if (container.project && container.project.id !== projectId)
+      throw new Error(
+        `Container ${id} is already linked to ${container.project.name}.`,
+      );
+    const link = containerProjectLinkSchema.parse({
+      projectId,
+      createdAt: container.createdAt,
+      image: container.image,
+    });
+    const key = containerProjectKey(hostId, id);
+    await bb.storage.kv.set(key, link);
+    projectLinks.set(key, link);
+    bb.realtime.publish("changed", { hostId });
+    return { ...container, project: { id: project.id, name: project.name } };
+  }
+  async function getDiskUsage(hostId: string, signal?: AbortSignal) {
+    const { binaryPath, allowExternal } = await settings.get();
+    return host.call(
+      "diskUsage",
+      { binaryPath, allowExternal },
+      { hostId, signal, timeoutMs: 45_000 },
+    );
+  }
+  async function execute(
+    hostId: string,
+    input: unknown,
+    signal?: AbortSignal,
+    threadId?: string,
+  ) {
     const command = commandSchema.parse(input);
+    let owner: ContainerOwner | undefined;
+    if (
+      threadId &&
+      ["run", "exec", "start", "stop", "delete"].includes(command.op)
+    ) {
+      const thread = await bb.sdk.threads.get({ threadId });
+      owner = containerOwnerSchema.parse({
+        threadId,
+        projectId: thread.projectId,
+        ...(thread.environmentId
+          ? { environmentId: thread.environmentId }
+          : {}),
+      });
+      if (command.op === "run") {
+        // Save the target before launch: timeouts and plugin reloads must not lose it.
+        await bb.storage.kv.set(
+          `agent-owner:${JSON.stringify(threadId)}:${hostId}`,
+          { ...owner, hostId },
+        );
+      }
+    }
     const { binaryPath, allowExternal } = await settings.get();
     const result = await host.call(
       "perform",
-      { config: { binaryPath, allowExternal }, command },
+      {
+        config: { binaryPath, allowExternal },
+        command,
+        ...(owner ? { owner } : {}),
+      },
       { hostId, signal, timeoutMs: timeoutFor(command) + 35_000 },
     );
     if (!["logs", "inspect", "stats"].includes(command.op))
       bb.realtime.publish("changed", { hostId });
     return result;
+  }
+  async function cleanupContainers(
+    threadId: string,
+    dryRun: boolean,
+    signal?: AbortSignal,
+  ) {
+    const hosts: {
+      hostId: string;
+      result: ContainerCleanupResult | null;
+      error?: string;
+    }[] = [];
+    for (const key of await bb.storage.kv.list(
+      `agent-owner:${JSON.stringify(threadId)}:`,
+    )) {
+      const { hostId, ...owner } = agentOwnerSchema.parse(
+        await bb.storage.kv.get(key),
+      );
+      if (owner.threadId !== threadId)
+        throw new Error(
+          "Container owner scope did not match the requested thread.",
+        );
+      try {
+        const { binaryPath, allowExternal } = await settings.get();
+        const result = await host.call(
+          "cleanupContainers",
+          { config: { binaryPath, allowExternal }, owner, dryRun },
+          { hostId, signal, timeoutMs: 900_000 },
+        );
+        hosts.push({ hostId, result });
+        if (!dryRun) bb.realtime.publish("changed", { hostId });
+      } catch (cause) {
+        hosts.push({
+          hostId,
+          result: null,
+          error: errorText(cause).slice(0, 2000),
+        });
+      }
+    }
+    return {
+      threadId,
+      kind: hosts.some(
+        (h) => !h.result || ["partial", "busy"].includes(h.result.kind),
+      )
+        ? "partial"
+        : dryRun
+          ? "preview"
+          : "complete",
+      hosts,
+    };
   }
   const listHosts = async () => {
     const hosts = await bb.sdk.hosts.list();
@@ -172,6 +400,8 @@ export default async function plugin(bb: BbPluginApi) {
     },
     hosts: listHosts,
     snapshot: ({ hostId }) => getSnapshot(hostId),
+    linkContainerProject: (input) => linkContainerProject(input),
+    diskUsage: ({ hostId }) => getDiskUsage(hostId),
     metrics: async ({ hostId }) => {
       const { binaryPath, allowExternal } = await settings.get();
       return host.call(
@@ -191,23 +421,66 @@ export default async function plugin(bb: BbPluginApi) {
     "apple_container_read",
     "apple_container_manage",
     "apple_container_image",
+    "apple_container_reclaim",
     "apple_workspace",
     "apple_workspace_exec",
     "apple_workspace_setup",
     "apple_workspace_teardown",
+    "apple_container_cleanup",
   ];
   // Refresh session selection on settings changes; execution also enforces the toggle.
   bb.agents.configure((context) => ({
     tools: current.enableAgentTools ? tools : [],
     skills: ["apple-containers"],
-    ...(current.enableAgentTools &&
-    workspaces.profiles.get(context.project.id)?.enabled
+    ...(current.enableAgentTools
       ? {
           instructions:
-            "This project has a container environment for its app, database, and development tools. The agent and Git stay on the Mac. Before running app commands, builds, dependency installs, or tests, call apple_workspace with action ensure, then use apple_workspace_exec (default service app, cwd /workspace). Files in /workspace are the current checkout/worktree. Use the returned loopback ports for browser checks. Other worktrees have separate databases. Reuse this environment and preserve its volumes; do not recreate containers unless asked. Ensure reports containers running, not application or database readiness; check service logs/readiness before tests. When the task is finished and no more container work is needed, call apple_workspace_teardown to remove its containers and network, retaining named volumes. Respect user/repository instructions to keep a runtime or app running. Cleanup refuses while another thread is active in the same environment; report that deferral. Set removeVolumes=true only when deleting the persistent data is explicitly authorized.",
+            cleanupInstructions +
+            (workspaces.profiles.get(context.project.id)?.enabled
+              ? "\n" +
+                "This project has a container environment for its app, database, and development tools. The agent and Git stay on the Mac. Before running app commands, builds, dependency installs, or tests, call apple_workspace with action ensure, then use apple_workspace_exec (default service app, cwd /workspace). Files in /workspace are the current checkout/worktree. Use the returned loopback ports for browser checks. Other worktrees have separate databases. Reuse this environment and preserve its volumes; do not recreate containers unless asked. Ensure reports containers running, not application or database readiness; check service logs/readiness before tests. When the task is finished and no more container work is needed, call apple_workspace_teardown to remove its containers and network, retaining named volumes. Respect user/repository instructions to keep a runtime or app running. Cleanup refuses while another thread is active in the same environment; report that deferral. Set removeVolumes=true only when deleting the persistent data is explicitly authorized."
+              : ""),
         }
       : {}),
   }));
+  bb.agents.registerTool({
+    name: "apple_container_cleanup",
+    description:
+      "Preview or remove this thread's task containers across recorded Macs. Ownership is checked again before each stop/delete. Preserves manual containers, shared workspaces, volumes and images; partial and busy results require a retry.",
+    instructions: cleanupInstructions,
+    parameters: z.object({ dryRun: z.boolean().default(false) }).strict(),
+    async execute({ dryRun }, ctx) {
+      try {
+        if (!(await settings.get()).enableAgentTools)
+          throw new Error(
+            "Apple container agent tools are disabled in plugin settings.",
+          );
+        const result = await cleanupContainers(
+          ctx.threadId,
+          dryRun,
+          ctx.signal,
+        );
+        const text = JSON.stringify(result);
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text:
+                text.length > 48_000
+                  ? `${text.slice(0, 48_000)}\n[Output clipped at 48,000 characters; use bb apple-containers cleanup --thread ${ctx.threadId} --dry-run --json for the remaining scope.]`
+                  : text,
+            },
+          ],
+          isError: result.kind === "partial",
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text" as const, text: errorText(error) }],
+          isError: true,
+        };
+      }
+    },
+  });
   bb.agents.registerTool({
     name: "apple_workspace_teardown",
     description:
@@ -392,8 +665,11 @@ export default async function plugin(bb: BbPluginApi) {
         );
       const id = await resolveHost(hostId, ctx.threadId);
       const result = command
-        ? await execute(id, command, ctx.signal)
-        : await getSnapshot(id, ctx.signal);
+        ? await execute(id, command, ctx.signal, ctx.threadId)
+        : {
+            ...(await getSnapshot(id, ctx.signal)),
+            diskUsage: await getDiskUsage(id, ctx.signal).catch(() => null),
+          };
       const text = JSON.stringify({ hostId: id, ...result }, null, 2);
       return {
         content: [
@@ -417,7 +693,7 @@ export default async function plugin(bb: BbPluginApi) {
   bb.agents.registerTool({
     name: tools[0]!,
     description:
-      "Check Apple container runtime health, containers, images, networks and volumes on the thread's Mac or an explicit hostId.",
+      "Check Apple container runtime health, containers, images, networks, volumes and disk usage on the thread's Mac or an explicit hostId.",
     parameters: z.object(target).strict(),
     execute: ({ hostId }, ctx) => toolCall(hostId, ctx),
   });
@@ -504,6 +780,38 @@ export default async function plugin(bb: BbPluginApi) {
         ),
       ),
   });
+  bb.agents.registerTool({
+    name: "apple_container_reclaim",
+    description:
+      "Reclaim stopped BB-managed containers, dangling or unused images, or unattached volumes on a selected Mac. Image and volume cleanup require the external-resource setting; volume cleanup permanently deletes data and requires an additional acknowledgment.",
+    instructions:
+      "Use only when the user directly asks to reclaim Apple container disk space. Read apple_container_status first and choose the narrowest suitable target. stopped-containers removes only BB-managed stopped containers and keeps named volumes. dangling-images removes untagged images; unused-images also removes images no container references. Those image operations may remove resources created outside BB and require allowExternal in plugin settings. unattached-volumes permanently deletes all volumes without running or stopped container references; use it only when the user explicitly authorizes deletion of persistent data and pass dataLossAcknowledged=true. Never run reclaim automatically during task cleanup.",
+    parameters: z
+      .object({
+        ...target,
+        target: z.enum([
+          "stopped-containers",
+          "dangling-images",
+          "unused-images",
+          "unattached-volumes",
+        ]),
+        confirmed: z.literal(true),
+        dataLossAcknowledged: z.literal(true).optional(),
+      })
+      .strict()
+      .refine(
+        (value) =>
+          value.target !== "unattached-volumes" ||
+          value.dataLossAcknowledged === true,
+        {
+          message:
+            "Unattached-volume cleanup requires explicit data-loss acknowledgment.",
+          path: ["dataLossAcknowledged"],
+        },
+      ),
+    execute: ({ hostId, ...input }, ctx) =>
+      toolCall(hostId, ctx, commandSchema.parse({ op: "reclaim", ...input })),
+  });
 
   const common = {
     host: {
@@ -532,6 +840,7 @@ export default async function plugin(bb: BbPluginApi) {
         await resolveHost(options.host, ctx.threadId),
         command,
         ctx.signal,
+        ctx.threadId,
       ),
       options.json,
     );
@@ -650,6 +959,44 @@ export default async function plugin(bb: BbPluginApi) {
         "workspace status": workspaceCommand("status"),
         "workspace stop": workspaceCommand("stop"),
         "workspace recreate": workspaceCommand("recreate"),
+        reclaim: cliCommand({
+          summary:
+            "Reclaim selected Apple container resources; volume removal permanently deletes unattached data",
+          options: {
+            ...common,
+            confirm: {
+              type: "boolean",
+              required: true,
+              description: "Confirm cleanup on the selected Mac",
+            },
+            "delete-data": {
+              type: "boolean",
+              default: false,
+              description:
+                "Acknowledge permanent deletion when target is unattached-volumes",
+            },
+          },
+          positionals: [
+            {
+              name: "target",
+              required: true,
+              description:
+                "stopped-containers, dangling-images, unused-images, or unattached-volumes",
+            },
+          ],
+          run(input, ctx) {
+            const targetValue = input.positionals.target;
+            const command = commandSchema.parse({
+              op: "reclaim",
+              target: targetValue,
+              confirmed: input.options.confirm,
+              ...(input.options["delete-data"]
+                ? { dataLossAcknowledged: true }
+                : {}),
+            });
+            return call(command, input.options, ctx);
+          },
+        }),
         hosts: cliCommand({
           summary: "List BB machine IDs",
           options: { json: common.json },
@@ -717,10 +1064,88 @@ export default async function plugin(bb: BbPluginApi) {
             };
           },
         }),
+        cleanup: cliCommand({
+          summary:
+            "Preview or remove one thread's task containers across its recorded Macs",
+          options: {
+            thread: {
+              type: "string",
+              description: "Owner thread ID; defaults to the invoking thread",
+            },
+            "dry-run": {
+              type: "boolean",
+              default: false,
+              description:
+                "Preview owned containers without stopping or deleting",
+            },
+            json: common.json,
+          },
+          async run(input, ctx) {
+            const threadId = input.options.thread ?? ctx.threadId;
+            if (!threadId)
+              throw new Error(
+                "Run inside the owning BB thread or supply --thread <id>.",
+              );
+            const result = await cleanupContainers(
+              threadId,
+              input.options["dry-run"],
+              ctx.signal,
+            );
+            const removed = result.hosts.reduce(
+              (total, host) => total + (host.result?.removed.length ?? 0),
+              0,
+            );
+            const planned = result.hosts.reduce(
+              (total, host) => total + (host.result?.planned.length ?? 0),
+              0,
+            );
+            return {
+              exitCode: result.kind === "partial" ? 1 : 0,
+              stdout: input.options.json
+                ? JSON.stringify(result)
+                : `${result.kind}: ${result.kind === "preview" ? planned + " containers planned" : removed + " containers removed"}. Manual containers, volumes and images are kept.\n${JSON.stringify(result.hosts)}`,
+            };
+          },
+        }),
+        "link-project": cliCommand({
+          summary: "Link a BB-managed container to a BB project",
+          options: {
+            ...common,
+            project: {
+              type: "string",
+              required: true,
+              description: "BB project ID",
+            },
+          },
+          positionals: idPosition,
+          async run(input, ctx) {
+            const value = await linkContainerProject(
+              {
+                hostId: await resolveHost(input.options.host, ctx.threadId),
+                id: input.positionals.id,
+                projectId: input.options.project,
+              },
+              ctx.signal,
+            );
+            return {
+              exitCode: 0,
+              stdout: input.options.json
+                ? JSON.stringify(value)
+                : `Linked ${value.id} to ${value.project.name}.`,
+            };
+          },
+        }),
         run: cliCommand({
           summary: "Create a detached BB-managed container",
           options: {
             ...common,
+            cleanup: {
+              type: "enum",
+              values: ["task", "manual"],
+              default: "task",
+              description:
+                "task: owner cleanup may remove it; manual: keep running until explicitly managed",
+            },
             name: {
               type: "string",
               required: true,
@@ -795,6 +1220,7 @@ export default async function plugin(bb: BbPluginApi) {
                 op: "run",
                 name: input.options.name,
                 image: input.positionals.image,
+                cleanup: input.options.cleanup,
                 command: input.positionals.command,
                 cpus: input.options.cpus,
                 memoryMiB: input.options.memory,

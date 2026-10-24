@@ -24,9 +24,13 @@ import {
 } from "./workspace-schema";
 import type { Runner } from "./process";
 import type { CommandResult } from "../contract";
-import { MANAGED_LABEL, parseArray, summariseContainer } from "./runtime";
+import {
+  MANAGED_LABEL,
+  WORKSPACE_LABEL as OWNER,
+  parseArray,
+  summariseContainer,
+} from "./runtime";
 
-const OWNER = "app.getbb.apple-containers.workspace";
 const SERVICE = "app.getbb.apple-containers.service";
 const resourceSchema = z
   .object({

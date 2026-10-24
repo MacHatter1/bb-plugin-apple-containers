@@ -8,7 +8,8 @@ import { CreateDialog, ImageDialog } from "./ui/forms";
 import {
   Empty,
   formatBytes,
-  StateBadge,
+  Lamp,
+  shortImage,
   Symbol,
   type SymbolName,
 } from "./ui/elements";
@@ -19,9 +20,23 @@ import "./styles.css";
 import "./ui/thread-containers.css";
 import { ProjectEnvironments } from "./ui/project-environments";
 import { ThreadContainerBadge } from "./ui/thread-containers";
+import { StorageView } from "./ui/storage";
+import { groupByProject, Yard } from "./ui/yard";
+import { Inventory } from "./ui/inventory";
+import { Cleanup } from "./ui/cleanup";
 
 type View =
-  "dashboard" | "projects" | "containers" | "images" | "volumes" | "networks";
+  | "dashboard"
+  | "projects"
+  | "storage"
+  | "containers"
+  | "images"
+  | "volumes"
+  | "networks";
+const cliVersion = (version: string) =>
+  version.match(/\d+\.\d+(?:\.\d+)?/)?.[0];
+const plural = (count: number, one: string, many = `${one}s`) =>
+  `${count} ${count === 1 ? one : many}`;
 export function Dashboard({ subPath = "" }: PluginNavPanelProps) {
   const [routeView, routeProjectId, routeEnvironmentId, routeHostId] =
     subPath.split("/");
@@ -37,6 +52,7 @@ export function Dashboard({ subPath = "" }: PluginNavPanelProps) {
     act,
     error,
     notice,
+    noticeDetails,
   } = runtime;
   const [view, setView] = useState<View>(
       routeView === "projects" ? "projects" : "dashboard",
@@ -61,19 +77,31 @@ export function Dashboard({ subPath = "" }: PluginNavPanelProps) {
     setImageDialog(null);
     setQuery("");
   }, [hostId]);
+  const hostName =
+    hosts.find((host) => host.id === hostId)?.name ?? "the selected Mac";
+  const canControl = (c: ContainerSummary) =>
+    c.managed || !!data?.allowExternal;
+  const toggle = (c: ContainerSummary) =>
+    void act({ op: c.state === "running" ? "stop" : "start", id: c.id });
   const chosen =
     data?.containers.find((c) => c.id === selected) ??
     (view === "containers" ? (running[0] ?? data?.containers[0]) : undefined);
   const filtered =
     data?.containers.filter(
       (c) =>
-        `${c.id} ${c.image}`.toLowerCase().includes(query.toLowerCase()) &&
+        `${c.id} ${c.image} ${c.project?.name ?? ""}`
+          .toLowerCase()
+          .includes(query.toLowerCase()) &&
         (filter === "all" ||
           (filter === "managed" ? c.managed : c.state === filter)),
     ) ?? [];
+  const images =
+    data?.images.filter((i) =>
+      i.reference.toLowerCase().includes(query.toLowerCase()),
+    ) ?? [];
   const nav: { id: View; label: string; icon: SymbolName; count?: number }[] = [
     { id: "dashboard", label: "Dashboard", icon: "dashboard" },
-    { id: "projects", label: "Project environments", icon: "build" },
+    { id: "projects", label: "Projects", icon: "projects" },
     {
       id: "containers",
       label: "Containers",
@@ -98,6 +126,7 @@ export function Dashboard({ subPath = "" }: PluginNavPanelProps) {
       icon: "network",
       count: data?.networks.length,
     },
+    { id: "storage", label: "Storage", icon: "storage" },
   ];
   function openContainer(c: ContainerSummary) {
     setSelected(c.id);
@@ -107,133 +136,95 @@ export function Dashboard({ subPath = "" }: PluginNavPanelProps) {
     setRunImage(image);
     setCreating(true);
   }
-  function row(c: ContainerSummary) {
-    const sample = telemetry.samples.at(-1),
-      metric = sample?.containers.find((v) => v.id === c.id),
-      cpu = sample?.cpu[c.id];
+  function navButton(n: (typeof nav)[number]) {
     return (
-      <div
-        className={`ac-container-row ${chosen?.id === c.id && view === "containers" ? "is-selected" : ""}`}
-        key={c.id}
+      <button
+        key={n.id}
+        aria-label={n.label}
+        title={n.label}
+        data-view={n.id}
+        aria-current={view === n.id ? "page" : undefined}
+        onClick={() => {
+          setView(n.id);
+          setQuery("");
+        }}
       >
+        <Symbol name={n.icon} size={17} />
+        <span>{n.label}</span>
+        {n.count !== undefined && <small>{n.count}</small>}
+      </button>
+    );
+  }
+  function row(c: ContainerSummary) {
+    const isSelected = chosen?.id === c.id;
+    return (
+      <div className={`ac-row ${isSelected ? "is-selected" : ""}`} key={c.id}>
         <button
-          className="ac-container-select"
+          className="ac-row-open"
           aria-label={`Open ${c.id}`}
+          aria-current={isSelected ? "true" : undefined}
           onClick={() => openContainer(c)}
         >
-          <span
-            className={`ac-resource-icon ${c.state === "running" ? "ac-icon-green" : ""}`}
-          >
-            <Symbol name="cube" size={22} />
-          </span>
-          <span className="ac-container-label">
-            <strong>
-              {c.id}
-              {c.managed && <span className="ac-tag">BB</span>}
-            </strong>
-            <small title={c.image}>
-              {c.image.replace(/^docker.io\/library\//, "")}
-            </small>
+          <Lamp state={c.state} />
+          <span className="ac-row-text">
+            <strong>{c.id}</strong>
+            <small title={c.image}>{shortImage(c.image)}</small>
           </span>
         </button>
-        <div className="ac-row-metrics">
-          <span>
-            <small>CPU</small>
-            {cpu != null ? `${(cpu / Math.max(1, c.cpus)).toFixed(1)}%` : "—"}
-          </span>
-          <span>
-            <small>Memory</small>
-            {metric
-              ? formatBytes(metric.memoryUsageBytes)
-              : c.state === "running"
-                ? "—"
-                : "Stopped"}
-          </span>
-        </div>
-        <StateBadge state={c.state} />
         <button
           className="ac-icon-button ac-row-control"
           aria-label={`${c.state === "running" ? "Stop" : "Start"} ${c.id}`}
-          disabled={busy || !(c.managed || data?.allowExternal)}
-          onClick={() =>
-            void act({ op: c.state === "running" ? "stop" : "start", id: c.id })
-          }
+          disabled={busy || !canControl(c)}
+          onClick={() => toggle(c)}
         >
-          <Symbol name={c.state === "running" ? "stop" : "play"} size={15} />
+          <Symbol name={c.state === "running" ? "stop" : "play"} size={13} />
         </button>
       </div>
     );
   }
+  const status = data?.running
+    ? "Services running"
+    : data
+      ? data.installed
+        ? "Service stopped"
+        : "Not installed"
+      : error
+        ? "Not connected"
+        : "Connecting…";
+  const version = data && cliVersion(data.version);
   const title = nav.find((n) => n.id === view)!.label;
   return (
     <div className="ac-shell">
       <div className="ac-workspace">
         <aside className="ac-sidebar" aria-label="Apple Containers navigation">
-          <div className="ac-brand">
-            <span className="ac-brand-icon">
-              <Symbol name="cube" size={22} />
-            </span>
+          <div
+            className="ac-runtime"
+            data-state={data?.running ? "running" : data ? "stopped" : "idle"}
+            title={data ? `${data.version} on ${data.platform}` : status}
+          >
+            <i aria-hidden="true" />
             <span>
-              Apple Containers<small>Local workspace</small>
+              <strong>{status}</strong>
+              <small>
+                {data
+                  ? version
+                    ? `container CLI ${version}`
+                    : data.platform
+                  : hostName}
+              </small>
             </span>
           </div>
           <nav aria-label="Container dashboard sections">
-            <span className="ac-nav-label">Overview</span>
-            {nav.slice(0, 1).map((n) => (
-              <button
-                key={n.id}
-                aria-label={n.label}
-                title={n.label}
-                data-view={n.id}
-                aria-pressed={view === n.id}
-                onClick={() => setView(n.id)}
-              >
-                <Symbol name={n.icon} />
-                <span>{n.label}</span>
-              </button>
-            ))}
-            <span className="ac-nav-label">Resources</span>
-            {nav.slice(1).map((n) => (
-              <button
-                key={n.id}
-                aria-label={n.label}
-                title={n.label}
-                data-view={n.id}
-                aria-pressed={view === n.id}
-                onClick={() => {
-                  setView(n.id);
-                  setQuery("");
-                }}
-              >
-                <Symbol name={n.icon} />
-                <span>{n.id === "projects" ? "Projects" : n.label}</span>
-                {n.count !== undefined && <small>{n.count}</small>}
-              </button>
-            ))}
+            {nav.slice(0, 2).map(navButton)}
+            <span className="ac-nav-label">Runtime</span>
+            {nav.slice(2).map(navButton)}
           </nav>
-          <div className="ac-sidebar-bottom">
-            <div className="ac-engine">
-              <i className={data?.running ? "is-running" : ""} />
-              <span>
-                {data?.running
-                  ? "Services running"
-                  : data
-                    ? "Service offline"
-                    : "Connecting…"}
-                <small>Apple container runtime</small>
-              </span>
-            </div>
-            <div className="ac-agent-note">
-              <Symbol name="shield" size={14} />
-              <span>Available to your agents</span>
-            </div>
-          </div>
         </aside>
         <main className="ac-main">
           <header className="ac-toolbar">
             <h1>{title}</h1>
-            <div>
-              <label className="ac-machine">
+            <div className="ac-toolbar-actions">
+              <label className="ac-machine" title="Machine">
                 <Symbol name="cpu" size={14} />
                 <select
                   aria-label="Machine"
@@ -247,14 +238,20 @@ export function Dashboard({ subPath = "" }: PluginNavPanelProps) {
                     </option>
                   ))}
                 </select>
+                <Symbol
+                  name="chevron"
+                  size={10}
+                  className="ac-machine-chevron"
+                />
               </label>
               <button
                 className="ac-icon-button"
                 aria-label="Refresh workspace"
+                title="Refresh"
                 disabled={refreshing || !hostId}
                 onClick={() => void refresh()}
               >
-                <Symbol name="refresh" size={17} />
+                <Symbol name="refresh" size={16} />
               </button>
               <button
                 className="ac-button ac-button-primary"
@@ -263,21 +260,34 @@ export function Dashboard({ subPath = "" }: PluginNavPanelProps) {
                 disabled={busy || !data?.running}
                 onClick={() => newContainer()}
               >
-                <Symbol name="plus" size={16} />
+                <Symbol name="plus" size={15} />
                 <span>New container</span>
               </button>
             </div>
           </header>
           {(error || notice || busy) && (
             <div
-              className={`ac-message ${error ? "ac-message-error" : ""}`}
-              role={error ? "alert" : "status"}
+              className="ac-message"
+              data-tone={error ? "error" : busy ? "busy" : "done"}
             >
               <Symbol
                 name={error ? "shield" : busy ? "refresh" : "check"}
                 size={15}
               />
-              {error || (busy ? "Working on your Mac…" : notice)}
+              <div className="ac-message-content">
+                <div
+                  className="ac-message-summary"
+                  role={error ? "alert" : "status"}
+                >
+                  {error || (busy ? "Working on your Mac…" : notice)}
+                </div>
+                {!error && !busy && noticeDetails && (
+                  <details className="ac-message-details">
+                    <summary>View cleanup output</summary>
+                    <pre>{noticeDetails}</pre>
+                  </details>
+                )}
+              </div>
             </div>
           )}
           <div
@@ -287,32 +297,35 @@ export function Dashboard({ subPath = "" }: PluginNavPanelProps) {
               <Empty
                 title={
                   error
-                    ? "Couldn’t connect to the runtime"
-                    : "Connecting to your Mac"
+                    ? "Couldn’t reach the container runtime"
+                    : `Connecting to ${hostName}`
                 }
                 icon="cpu"
                 action={
-                  <button className="ac-button" onClick={() => void refresh()}>
-                    Refresh
-                  </button>
+                  error ? (
+                    <button
+                      className="ac-button"
+                      onClick={() => void refresh()}
+                    >
+                      Try again
+                    </button>
+                  ) : undefined
                 }
               >
                 {error
-                  ? "Check your machine connection, then try again."
+                  ? "Check that the machine is online in BB, then try again."
                   : "Checking Apple container services and local resources…"}
               </Empty>
             ) : (
               <>
                 {!data.running && (
                   <section className="ac-setup">
-                    <span className="ac-runtime-symbol">
-                      <Symbol name="cpu" size={26} />
-                    </span>
+                    <Symbol name="cpu" size={22} />
                     <div>
                       <h2>
                         {data.installed
-                          ? "Your container service is stopped"
-                          : "Set up Apple containers"}
+                          ? "The container service is stopped"
+                          : "Install Apple’s container runtime"}
                       </h2>
                       <p>{data.message}</p>
                       {data.supported && data.installed ? (
@@ -329,7 +342,8 @@ export function Dashboard({ subPath = "" }: PluginNavPanelProps) {
                           target="_blank"
                           rel="noreferrer"
                         >
-                          Installation guide
+                          Open the installation guide
+                          <Symbol name="external" size={13} />
                         </a>
                       )}
                     </div>
@@ -352,151 +366,76 @@ export function Dashboard({ subPath = "" }: PluginNavPanelProps) {
                     }
                   />
                 )}
+                {view === "storage" && (
+                  <StorageView
+                    hostId={hostId}
+                    allowExternal={data.allowExternal}
+                    running={data.running}
+                    hostName={hostName}
+                    busy={busy}
+                    act={act}
+                    refresh={refresh}
+                  />
+                )}
                 {view === "dashboard" && (
-                  <div className="ac-dashboard">
-                    <section className="ac-service-banner">
-                      <span
-                        className={`ac-service-check ${data.running ? "is-online" : ""}`}
-                      >
-                        <Symbol
-                          name={data.running ? "check" : "cpu"}
-                          size={24}
-                        />
-                      </span>
-                      <div>
-                        <h2>
-                          {data.running
-                            ? "Container services running"
-                            : "Container service offline"}
-                        </h2>
-                        <p>
-                          {data.version.replace(/ \(build:.*$/, "") ||
-                            data.platform}
-                        </p>
-                      </div>
-                      <span className="ac-chip">{data.platform}</span>
-                      <span className="ac-live-label">
-                        <i />
-                        Live
-                      </span>
-                    </section>
-                    <div className="ac-resource-strip">
-                      {[
-                        {
-                          icon: "cube" as const,
-                          label: "Containers",
-                          value: data.containers.length,
-                          detail: `${running.length} running`,
-                          target: "containers" as const,
-                          color: "green",
-                        },
-                        {
-                          icon: "images" as const,
-                          label: "Images",
-                          value: data.images.length,
-                          detail: "Ready to run",
-                          target: "images" as const,
-                          color: "blue",
-                        },
-                        {
-                          icon: "volume" as const,
-                          label: "Volumes",
-                          value: data.volumes.length,
-                          detail: "Persistent storage",
-                          target: "volumes" as const,
-                          color: "purple",
-                        },
-                        {
-                          icon: "network" as const,
-                          label: "Networks",
-                          value: data.networks.length,
-                          detail: "Local networks",
-                          target: "networks" as const,
-                          color: "teal",
-                        },
-                      ].map((item) => (
-                        <button
-                          key={item.label}
-                          className="ac-resource-summary"
-                          onClick={() => setView(item.target)}
-                        >
-                          <span className={`ac-summary-icon ac-${item.color}`}>
-                            <Symbol name={item.icon} size={21} />
-                          </span>
-                          <span>
-                            <small>{item.label}</small>
-                            <strong>{item.value}</strong>
-                            <em>{item.detail}</em>
-                          </span>
-                          <Symbol name="chevron" size={14} />
-                        </button>
-                      ))}
-                    </div>
-                    <div className="ac-section-heading">
-                      <h2>Resource monitor</h2>
-                      <span>
-                        {running.length
-                          ? "Live · sampled every 5 seconds"
-                          : "No containers running"}
-                      </span>
-                    </div>
-                    {telemetry.error && (
-                      <p className="ac-warning">
-                        Metrics unavailable: {telemetry.error}
-                      </p>
-                    )}
-                    <Monitor
-                      containers={data.containers}
-                      samples={telemetry.samples}
-                    />
-                    <section className="ac-running-section">
+                  <div className="ac-page ac-dashboard">
+                    <section className="ac-section">
                       <div className="ac-section-heading">
-                        <h2>
-                          Running containers
-                          <span className="ac-count">{running.length}</span>
-                        </h2>
-                        <button
-                          className="ac-text-button"
-                          onClick={() => setView("containers")}
+                        <h2>Containers</h2>
+                        <span>
+                          {running.length} running,{" "}
+                          {data.containers.length - running.length} stopped
+                        </span>
+                      </div>
+                      {data.containers.length ? (
+                        <Yard
+                          containers={data.containers}
+                          sample={telemetry.samples.at(-1)}
+                          canControl={canControl}
+                          busy={busy}
+                          open={openContainer}
+                          toggle={toggle}
+                        />
+                      ) : (
+                        <Empty
+                          title="No containers on this Mac"
+                          icon="cube"
+                          action={
+                            <button
+                              className="ac-button ac-button-primary"
+                              disabled={!data.running || busy}
+                              onClick={() => newContainer()}
+                            >
+                              <Symbol name="plus" size={15} />
+                              Create a container
+                            </button>
+                          }
                         >
-                          View all
-                          <Symbol name="arrow" size={14} />
-                        </button>
-                      </div>
-                      <div className="ac-row-list">
-                        {running.length ? (
-                          running.map(row)
-                        ) : (
-                          <Empty
-                            title="Room for your next project"
-                            icon="cube"
-                            action={
-                              <button
-                                className="ac-button ac-button-primary"
-                                disabled={!data.running || busy}
-                                onClick={() => newContainer()}
-                              >
-                                <Symbol name="plus" size={15} />
-                                New container
-                              </button>
-                            }
-                          >
-                            Start a Linux workspace, run a service, or let an
-                            agent build in a container.
-                          </Empty>
-                        )}
-                      </div>
+                          Start a Linux workspace or a service. Agents can use
+                          containers created here.
+                        </Empty>
+                      )}
                     </section>
-                    <div className="ac-dashboard-footer">
-                      <Symbol name="shield" size={15} />
-                      <p>
-                        Containers created here are labelled and ready for your
-                        BB agents.
-                      </p>
-                      <span>
-                        Updated {new Date(data.checkedAt).toLocaleTimeString()}
-                      </span>
-                    </div>
+                    <section className="ac-section">
+                      <div className="ac-section-heading">
+                        <h2>Resource use</h2>
+                        <span>
+                          {running.length
+                            ? `${plural(running.length, "running container")}, sampled every 5 seconds`
+                            : "Nothing running"}
+                        </span>
+                      </div>
+                      {telemetry.error && (
+                        <p className="ac-warning">
+                          Metrics unavailable: {telemetry.error}
+                        </p>
+                      )}
+                      <Monitor
+                        containers={data.containers}
+                        samples={telemetry.samples}
+                      />
+                    </section>
+                    <Cleanup hostId={hostId} data={data} open={setView} />
                   </div>
                 )}
                 {view === "containers" && (
@@ -504,22 +443,28 @@ export function Dashboard({ subPath = "" }: PluginNavPanelProps) {
                     <section className="ac-container-browser">
                       <div className="ac-browser-tools">
                         <label className="ac-search">
-                          <Symbol name="search" size={15} />
+                          <Symbol name="search" size={14} />
                           <input
                             aria-label="Filter containers"
-                            placeholder="Search containers"
+                            placeholder="Name, image or project"
                             value={query}
                             onChange={(e) => setQuery(e.target.value)}
                           />
                         </label>
                         <div
                           className="ac-filter"
+                          role="group"
                           aria-label="Container filter"
                         >
                           {["all", "running", "stopped", "managed"].map((v) => (
                             <button
                               key={v}
                               aria-pressed={filter === v}
+                              title={
+                                v === "managed"
+                                  ? "Containers created by BB"
+                                  : undefined
+                              }
                               onClick={() => setFilter(v)}
                             >
                               {v === "managed"
@@ -529,14 +474,27 @@ export function Dashboard({ subPath = "" }: PluginNavPanelProps) {
                           ))}
                         </div>
                       </div>
-                      <div className="ac-browser-count">
-                        {filtered.length}{" "}
-                        {filtered.length === 1 ? "container" : "containers"}
-                        <span>{running.length} running</span>
-                      </div>
                       <div className="ac-browser-list">
                         {filtered.length ? (
-                          filtered.map(row)
+                          groupByProject(filtered).map(
+                            ({ project, containers }) => (
+                              <section
+                                className="ac-container-group"
+                                aria-label={project?.name ?? "Other containers"}
+                                key={project?.id ?? ""}
+                              >
+                                <div className="ac-container-group-heading">
+                                  <h2 title={project?.name}>
+                                    {project?.name ?? "Other containers"}
+                                  </h2>
+                                  <span className="ac-count">
+                                    {containers.length}
+                                  </span>
+                                </div>
+                                {containers.map(row)}
+                              </section>
+                            ),
+                          )
                         ) : (
                           <Empty
                             title={
@@ -546,8 +504,10 @@ export function Dashboard({ subPath = "" }: PluginNavPanelProps) {
                             }
                           >
                             {query
-                              ? "Try another name or image."
-                              : "Create a container to get started."}
+                              ? "Try another name, image or project."
+                              : filter === "all"
+                                ? "Create a container to get started."
+                                : "Choose All to see every container."}
                           </Empty>
                         )}
                       </div>
@@ -557,37 +517,33 @@ export function Dashboard({ subPath = "" }: PluginNavPanelProps) {
                         key={`${hostId}:${chosen.id}`}
                         container={chosen}
                         hostId={hostId}
-                        canControl={chosen.managed || data.allowExternal}
+                        canControl={canControl(chosen)}
                         busy={busy}
                         act={act}
                         samples={telemetry.samples}
                       />
                     ) : (
                       <Empty title="Select a container" icon="cube">
-                        Its configuration, resource usage, logs and console
-                        appear here.
+                        Its settings, resource use, logs and console appear
+                        here.
                       </Empty>
                     )}
                   </div>
                 )}
                 {view === "images" && (
-                  <div className="ac-inventory">
-                    <div className="ac-view-heading">
-                      <div>
-                        <h2>Image library</h2>
-                        <p>
-                          {data.images.length} local{" "}
-                          {data.images.length === 1 ? "image" : "images"} on
-                          this Mac
-                        </p>
-                      </div>
+                  <div className="ac-page">
+                    <div className="ac-lede-row">
+                      <p className="ac-lede">
+                        {plural(data.images.length, "image")} stored on{" "}
+                        {hostName}. Run one to start a container from it.
+                      </p>
                       <div className="ac-action-group">
                         <button
                           className="ac-button"
                           disabled={busy || !data.running}
                           onClick={() => setImageDialog("build")}
                         >
-                          <Symbol name="build" size={15} />
+                          <Symbol name="build" size={14} />
                           Build image
                         </button>
                         <button
@@ -595,134 +551,102 @@ export function Dashboard({ subPath = "" }: PluginNavPanelProps) {
                           disabled={busy || !data.running}
                           onClick={() => setImageDialog("pull")}
                         >
-                          <Symbol name="plus" size={15} />
+                          <Symbol name="plus" size={14} />
                           Pull image
                         </button>
                       </div>
                     </div>
-                    <label className="ac-search ac-inventory-search">
-                      <Symbol name="search" size={16} />
-                      <input
-                        aria-label="Filter images"
-                        placeholder="Search images"
-                        value={query}
-                        onChange={(e) => setQuery(e.target.value)}
-                      />
-                    </label>
-                    <div className="ac-image-list">
-                      {data.images
-                        .filter((i) =>
-                          i.reference
-                            .toLowerCase()
-                            .includes(query.toLowerCase()),
-                        )
-                        .map((i) => (
-                          <div
-                            className="ac-image-row"
+                    {data.images.length > 0 && (
+                      <label className="ac-search ac-page-search">
+                        <Symbol name="search" size={14} />
+                        <input
+                          aria-label="Filter images"
+                          placeholder="Filter images"
+                          value={query}
+                          onChange={(e) => setQuery(e.target.value)}
+                        />
+                      </label>
+                    )}
+                    {images.length > 0 && (
+                      <ul className="ac-list">
+                        {images.map((i) => (
+                          <li
+                            className="ac-list-row"
                             key={`${i.reference}:${i.digest}`}
                           >
-                            <span className="ac-resource-icon ac-icon-blue">
-                              <Symbol name="images" size={24} />
-                            </span>
-                            <div className="ac-image-name">
-                              <strong>
-                                {i.reference.replace(
-                                  /^docker.io\/library\//,
-                                  "",
-                                )}
+                            <span className="ac-list-main">
+                              <strong className="ac-mono">
+                                {shortImage(i.reference)}
                               </strong>
-                              <small title={i.digest}>{i.digest}</small>
-                            </div>
-                            <span className="ac-chip">OCI image</span>
+                              <small className="ac-mono" title={i.digest}>
+                                {i.digest}
+                              </small>
+                            </span>
+                            {(() => {
+                              const users = data.containers.filter(
+                                (c) =>
+                                  shortImage(c.image) ===
+                                  shortImage(i.reference),
+                              ).length;
+                              return users ? (
+                                <span
+                                  className="ac-tag"
+                                  title="Unused-image cleanup keeps images that containers use"
+                                >
+                                  Used by {plural(users, "container")}
+                                </span>
+                              ) : null;
+                            })()}
+                            <span className="ac-list-figure">
+                              {i.size ? formatBytes(i.size) : ""}
+                            </span>
                             <button
                               className="ac-button"
+                              aria-label={`Run ${shortImage(i.reference)}`}
                               disabled={busy || !data.running}
                               onClick={() => newContainer(i.reference)}
                             >
-                              <Symbol name="play" size={13} />
+                              <Symbol name="play" size={12} />
                               Run
                             </button>
-                          </div>
+                          </li>
                         ))}
-                      {data.images.length === 0 && (
-                        <Empty
-                          title="Your image library starts here"
-                          icon="images"
-                          action={
-                            <button
-                              className="ac-button ac-button-primary"
-                              disabled={busy || !data.running}
-                              onClick={() => setImageDialog("pull")}
-                            >
-                              Pull your first image
-                            </button>
-                          }
-                        >
-                          Pull an OCI image from a registry, or build one from a
-                          Dockerfile.
+                      </ul>
+                    )}
+                    {data.images.length === 0 ? (
+                      <Empty
+                        title="No images yet"
+                        icon="images"
+                        action={
+                          <button
+                            className="ac-button ac-button-primary"
+                            disabled={busy || !data.running}
+                            onClick={() => setImageDialog("pull")}
+                          >
+                            Pull an image
+                          </button>
+                        }
+                      >
+                        Pull an OCI image from a registry, or build one from a
+                        Dockerfile.
+                      </Empty>
+                    ) : (
+                      images.length === 0 && (
+                        <Empty title="No matching images" icon="images">
+                          Try another name or tag.
                         </Empty>
-                      )}
-                    </div>
+                      )
+                    )}
                   </div>
                 )}
                 {(view === "networks" || view === "volumes") && (
-                  <div className="ac-inventory">
-                    <div className="ac-view-heading">
-                      <div>
-                        <h2>
-                          {view === "networks"
-                            ? "Container networks"
-                            : "Persistent volumes"}
-                        </h2>
-                        <p>
-                          {view === "networks"
-                            ? "Networks available to your local containers."
-                            : "Storage managed by Apple’s container runtime."}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="ac-storage-grid">
-                      {(view === "networks" ? data.networks : data.volumes).map(
-                        (name) => (
-                          <article className="ac-storage-card" key={name}>
-                            <span
-                              className={`ac-resource-icon ${view === "networks" ? "ac-icon-teal" : "ac-icon-purple"}`}
-                            >
-                              <Symbol
-                                name={
-                                  view === "networks" ? "network" : "volume"
-                                }
-                                size={26}
-                              />
-                            </span>
-                            <h3>{name}</h3>
-                            <span className="ac-chip">
-                              {view === "networks"
-                                ? name === "default"
-                                  ? "Default network"
-                                  : "Local network"
-                                : "Named volume"}
-                            </span>
-                          </article>
-                        ),
-                      )}
-                    </div>
-                    {(view === "networks" ? data.networks : data.volumes)
-                      .length === 0 && (
-                      <Empty
-                        title={
-                          view === "networks"
-                            ? "No networks reported"
-                            : "No named volumes yet"
-                        }
-                        icon={view === "networks" ? "network" : "volume"}
-                      >
-                        {view === "networks"
-                          ? "Networks will appear here when the runtime reports them."
-                          : "Named volumes created with the container CLI will appear here."}
-                      </Empty>
-                    )}
-                  </div>
+                  <Inventory
+                    kind={view}
+                    names={view === "networks" ? data.networks : data.volumes}
+                    containers={data.containers}
+                    workspaces={data.workspaces ?? {}}
+                    hostName={hostName}
+                  />
                 )}
               </>
             )}
