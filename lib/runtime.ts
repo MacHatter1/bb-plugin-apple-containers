@@ -2,6 +2,7 @@ import { access, realpath, stat } from "node:fs/promises";
 import { constants } from "node:fs";
 import { isAbsolute } from "node:path";
 import { release } from "node:os";
+import { containerId, diskUsageSchema, type DiskUsage } from "../contract";
 import type {
   CommandResult,
   ContainerCommand,
@@ -9,11 +10,21 @@ import type {
   RuntimeConfig,
   Snapshot,
   Metrics,
+  ContainerOwner,
 } from "../contract";
+import {
+  ownershipArgs,
+  PROJECT_LABEL,
+  THREAD_LABEL,
+  INSTANCE_LABEL,
+  withContainerLock,
+} from "./container-ownership";
 import { runProcess, type Runner } from "./process";
+import { MANAGED_LABEL, runArgs } from "./run-args";
 import { timeoutFor } from "./timeout";
 
-export const MANAGED_LABEL = "app.getbb.apple-containers.managed";
+export { MANAGED_LABEL };
+export const WORKSPACE_LABEL = "app.getbb.apple-containers.workspace";
 type RecordValue = Record<string, unknown>;
 const obj = (v: unknown): RecordValue =>
   v !== null && typeof v === "object" && !Array.isArray(v)
@@ -40,16 +51,35 @@ export function parseArray(result: CommandResult): unknown[] {
     throw new Error("Expected an array from the Apple container CLI.");
   return parsed;
 }
+export function parseDiskUsage(result: CommandResult): DiskUsage {
+  if (!result.ok)
+    throw new Error(
+      result.stderr ||
+        result.stdout ||
+        `Container CLI exited ${result.exitCode}`,
+    );
+  if (result.truncated)
+    throw new Error(
+      "Storage usage output exceeded the output limit; narrow the request using the native CLI.",
+    );
+  return diskUsageSchema.parse(JSON.parse(result.stdout));
+}
 export function summariseContainer(value: unknown): ContainerSummary {
   const root = obj(value),
     config = obj(root.configuration),
     status = obj(root.status),
-    resources = obj(config.resources);
+    resources = obj(config.resources),
+    workspaceKey = str(obj(config.labels)[WORKSPACE_LABEL]),
+    projectId = str(obj(config.labels)[PROJECT_LABEL]),
+    ownerThreadId = str(obj(config.labels)[THREAD_LABEL]);
   return {
     id: str(root.id) || str(config.id),
     image: str(obj(config.image).reference),
     state: str(status.state) || str(root.status) || "unknown",
     managed: obj(config.labels)[MANAGED_LABEL] === "true",
+    ...(workspaceKey ? { workspaceKey } : {}),
+    ...(projectId ? { projectId } : {}),
+    ...(ownerThreadId ? { ownerThreadId } : {}),
     cpus: num(resources.cpus),
     memoryBytes: num(resources.memoryInBytes),
     createdAt: str(config.creationDate),
@@ -61,35 +91,43 @@ export function summariseContainer(value: unknown): ContainerSummary {
       const port = obj(p);
       return `${str(port.hostAddress) || "127.0.0.1"}:${num(port.hostPort)}:${num(port.containerPort)}/${str(port.proto) || str(port.protocol) || "tcp"}`;
     }),
+    networks: [
+      ...new Set(
+        array(config.networks)
+          .map((n) => str(obj(n).network))
+          .filter(Boolean),
+      ),
+    ],
+    volumes: [
+      ...new Set(
+        array(config.mounts)
+          .map((mount) => str(obj(obj(obj(mount).type).volume).name))
+          .filter(Boolean),
+      ),
+    ],
   };
 }
-export function commandArgs(command: ContainerCommand): string[] {
+
+function reclaimIdentity(value: unknown) {
+  const config = obj(obj(value).configuration);
+  return JSON.stringify({
+    createdAt: str(config.creationDate),
+    image: obj(config.image),
+    labels: Object.entries(obj(config.labels)).sort(([a], [b]) =>
+      a.localeCompare(b),
+    ),
+  });
+}
+export function commandArgs(
+  command: ContainerCommand,
+  owner?: ContainerOwner,
+): string[] {
   switch (command.op) {
     case "run":
-      return [
-        "run",
-        "--detach",
-        "--name",
-        command.name,
-        "--label",
-        `${MANAGED_LABEL}=true`,
-        "--cpus",
-        String(command.cpus),
-        "--memory",
-        `${command.memoryMiB}M`,
-        ...command.env.flatMap((e) => ["--env", e]),
-        ...command.ports.flatMap((p) => [
-          "--publish",
-          `127.0.0.1:${p.host}:${p.guest}`,
-        ]),
-        ...command.mounts.flatMap((m) => [
-          "--mount",
-          `type=bind,source=${m.source},target=${m.target}${m.readOnly ? ",readonly" : ""}`,
-        ]),
-        ...(command.workdir ? ["--workdir", command.workdir] : []),
-        command.image,
-        ...command.command,
-      ];
+      return runArgs(
+        command,
+        owner ? ownershipArgs(owner, command.cleanup ?? "task") : [],
+      );
     case "exec":
       return [
         "exec",
@@ -113,6 +151,17 @@ export function commandArgs(command: ContainerCommand): string[] {
       return ["logs", "-n", String(command.lines), command.id];
     case "stats":
       return ["stats", "--no-stream", "--format", "json", command.id];
+    case "reclaim":
+      switch (command.target) {
+        case "stopped-containers":
+          return ["prune"];
+        case "dangling-images":
+          return ["image", "prune"];
+        case "unused-images":
+          return ["image", "prune", "--all"];
+        case "unattached-volumes":
+          return ["volume", "prune"];
+      }
     case "system-start":
       return ["system", "start", "--disable-kernel-install"];
     default:
@@ -164,22 +213,104 @@ export async function perform(
   config: RuntimeConfig,
   runner: Runner,
   signal?: AbortSignal,
+  owner?: ContainerOwner,
 ): Promise<CommandResult> {
-  if (
-    ["start", "stop", "delete", "exec"].includes(command.op) &&
-    "id" in command &&
-    !config.allowExternal
-  ) {
-    const inspected = parseArray(
-      await runner(["inspect", command.id], 30_000, signal),
-    );
-    if (inspected.length !== 1 || !summariseContainer(inspected[0]).managed) {
-      throw new Error(
-        "This container is not managed by BB. Enable allowExternal in plugin settings to control existing containers.",
+  if (command.op === "reclaim") {
+    if (command.target === "stopped-containers") {
+      const values = parseArray(
+        await runner(["list", "--all", "--format", "json"], 30_000, signal),
       );
+      const stoppedManaged = values
+        .map((value) => ({ ...summariseContainer(value), value }))
+        .filter(
+          (container) =>
+            container.managed && container.state.toLowerCase() === "stopped",
+        );
+      for (const container of stoppedManaged) containerId.parse(container.id);
+      const removed: string[] = [];
+      for (const container of stoppedManaged) {
+        signal?.throwIfAborted();
+        try {
+          await withContainerLock(container.id, async () => {
+            signal?.throwIfAborted();
+            const inspected = parseArray(
+              await runner(["inspect", container.id], 30_000, signal),
+            );
+            const current =
+              inspected.length === 1
+                ? summariseContainer(inspected[0])
+                : undefined;
+            const labels = obj(obj(obj(container.value).configuration).labels);
+            if (
+              !current ||
+              current.id !== container.id ||
+              !current.managed ||
+              current.state.toLowerCase() !== "stopped" ||
+              (!container.createdAt && !str(labels[INSTANCE_LABEL])) ||
+              reclaimIdentity(inspected[0]) !== reclaimIdentity(container.value)
+            )
+              throw new Error(
+                `Container ${container.id} changed or is no longer stopped; left untouched. Refresh before retrying.`,
+              );
+            const result = await runner(
+              ["delete", container.id],
+              60_000,
+              signal,
+            );
+            if (!result.ok || result.truncated)
+              throw new Error(
+                result.stderr ||
+                  result.stdout ||
+                  "Container CLI output was clipped.",
+              );
+            removed.push(container.id);
+          });
+        } catch (cause) {
+          throw new Error(
+            `Removed ${removed.length} of ${stoppedManaged.length} stopped BB-managed containers before cleanup failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+          );
+        }
+      }
+      return {
+        ok: true,
+        exitCode: 0,
+        stdout: removed.length
+          ? `Removed ${removed.length} stopped BB-managed ${removed.length === 1 ? "container" : "containers"}. Named volumes were kept.`
+          : "No stopped BB-managed containers to reclaim.",
+        stderr: "",
+        truncated: false,
+      };
     }
+    if (!config.allowExternal)
+      throw new Error(
+        "Image and volume cleanup can affect resources created outside BB. Enable external container control in Apple Containers settings before reclaiming them.",
+      );
   }
-  return runner(commandArgs(command), timeoutFor(command), signal);
+  const execute = async () => {
+    if (
+      ["start", "stop", "delete", "exec"].includes(command.op) &&
+      "id" in command &&
+      !config.allowExternal
+    ) {
+      const inspected = parseArray(
+        await runner(["inspect", command.id], 30_000, signal),
+      );
+      if (inspected.length !== 1 || !summariseContainer(inspected[0]).managed) {
+        throw new Error(
+          "This container is not managed by BB. Enable allowExternal in plugin settings to control existing containers.",
+        );
+      }
+    }
+    return runner(commandArgs(command, owner), timeoutFor(command), signal);
+  };
+  const id =
+    command.op === "run"
+      ? command.name
+      : ["start", "stop", "delete", "exec"].includes(command.op) &&
+          "id" in command
+        ? command.id
+        : undefined;
+  return id ? withContainerLock(id, execute) : execute();
 }
 export async function snapshot(
   config: RuntimeConfig,
@@ -252,9 +383,9 @@ export async function snapshot(
       );
       continue;
     }
-    if (read.value.length > 500)
+    const values = (read.value as unknown[]).slice(0, 500);
+    if ((read.value as unknown[]).length > 500)
       result.warnings.push(`${label}: showing the first 500 entries.`);
-    const values = read.value.slice(0, 500);
     if (i === 0) result.containers = values.map(summariseContainer);
     if (i === 1)
       result.images = values.map((v) => {

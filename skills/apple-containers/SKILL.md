@@ -15,12 +15,14 @@ This requires Apple silicon, macOS 26+ and Apple's `container` CLI (tested with
 
 ## Tools
 
-- `apple_container_status({hostId?})`: runtime, containers, images, networks, volumes.
-- `apple_container_run({name,image,command?,cpus?,memoryMiB?,env?,ports?,mounts?,workdir?,hostId?})`: detached container. Defaults: 2 CPUs, 1024 MiB, image's default command. For a development workspace use `command:["sleep","infinity"]` with a compatible image.
+- `apple_container_status({hostId?})`: runtime, containers, images, networks, volumes and disk usage.
+- `apple_container_run({name,image,command?,cleanup?,cpus?,memoryMiB?,env?,ports?,mounts?,workdir?,hostId?})`: detached container with automatic thread/project ownership. Cleanup defaults to `task`; choose `cleanup:"manual"` for a container the user or repository requires keeping. Defaults: 2 CPUs, 1024 MiB, image's default command. For a development workspace use `command:["sleep","infinity"]` with a compatible image.
+- `apple_container_cleanup({dryRun?})`: stop/delete this thread's task containers across its recorded Macs. `dryRun:true` previews exact candidates. Preserves manual containers, project workspace stacks, other threads' containers, named volumes and shared images. A partial or busy result requires inspection and retry.
 - `apple_container_exec({id,command,workdir?,timeoutSeconds?,hostId?})`: argv inside the guest; timeout defaults to 60 seconds (1–600).
 - `apple_container_read({id,view,lines?,hostId?})`: view `inspect`, `logs`, or `stats`. Logs default to 200 lines (1–2000).
 - `apple_container_manage({action,id?,hostId?})`: `start`, `stop`, `delete`, or `system-start`. Delete requires a stopped container. `system-start` omits id and never installs a kernel automatically.
 - `apple_container_image({action,image,context?,file?,hostId?})`: `pull`, or `build` with an absolute context directory and optional absolute Dockerfile path on that Mac.
+- `apple_container_reclaim({target,confirmed:true,dataLossAcknowledged?,hostId?})`: reclaim `stopped-containers`, `dangling-images`, `unused-images` or `unattached-volumes`. Image/volume cleanup requires the external-resource setting. Unattached-volume cleanup also requires `dataLossAcknowledged:true`.
 - `apple_workspace({action?})`: `ensure` (default), `status`, or `stop` for the invoking thread's project checkout/worktree. Uses the project's saved profile, reuses its containers and ports, and preserves named data volumes. No host override.
 - `apple_workspace_exec({command,service?,timeoutSeconds?})`: ensures that workspace, then executes argv in the named service (default `app`, working directory `/workspace`). Timeout defaults to 60 seconds, range 1–600. No host override.
 - `apple_workspace_setup({profile?})`: no arguments reads the current thread's project profile (or null), a default development profile, and PostgreSQL/MySQL presets. Supplying a complete `profile` saves the project setup. It always resolves the project from the thread, accepts no project/host override, and does not start or replace containers.
@@ -72,7 +74,7 @@ data volumes, changing unrelated projects, or overwriting local secret files.
 
 Configured threads have a container-status cube in their header. Clicking it
 shows this checkout/worktree's services, images, ports, persistent volume counts,
-logs and Start / reuse or Stop controls. Open dashboard selects that same
+logs and Start or Stop controls. Open dashboard selects that same
 environment. Threads sharing a worktree share its stack. Reading the badge never
 starts containers; Running means the containers run, not that an app is ready or
 that every agent command is automatically redirected into Linux.
@@ -128,6 +130,32 @@ containers running. Pending removal cleanup is reconciled every minute.
 
 ## Finish a task and clean up
 
+For standalone containers created with `apple_container_run` or the BB `run` CLI,
+call `apple_container_cleanup({})` at task completion. It uses durable thread,
+project and container-instance labels, rather than names or project membership
+alone. The creation target is saved before launch, so lost responses and plugin
+reloads do not lose cleanup scope, including explicit Mac overrides. The tool
+has no thread or host override; it always uses the invoking thread's saved scope.
+
+Choose `cleanup:"manual"` (CLI `--cleanup manual`) when creating a shared service,
+seeded runtime or app that must remain available under user/repository instructions.
+Cleanup leaves those containers running and reports them as retained. It does not
+adopt existing unowned containers just because they are managed by BB or linked
+to a project. Those require explicit lifecycle management by an operator.
+
+Use `dryRun:true` to preview. Cleanup rechecks the instance label before each
+stop/delete, never forces deletion, and verifies disappearance from inventory.
+It defers while an owned command is running in the same host worker. Successful
+deletions and failures are reported separately; inspect `hosts[].result.errors`
+or host errors on a partial result and repeat the same cleanup to reconcile.
+An operator can recover a finished/deleted thread's saved cleanup scope with
+`bb apple-containers cleanup --thread <owner-thread-id> --json`. Cleanup is
+requested explicitly at task completion; idle/archived events do not delete
+containers automatically. Container root filesystems are removed; keep needed
+artifacts in mounted folders before cleanup.
+
+For shared project workspace stacks, use the separate workspace teardown below.
+
 After the task's last build, test or app command, call
 `apple_workspace_teardown({})` when no further container work is needed. Follow
 user and repository instructions to keep an app, seeded test runtime or shared
@@ -161,7 +189,13 @@ can be partial: inspect status and preview resources before retrying.
 bb apple-containers hosts --json
 bb apple-containers status --json
 bb apple-containers list --json
+bb apple-containers link-project existing-container --project <project-id> --host <machine-id>
 bb apple-containers run --name task-workspace alpine:3.23 -- sleep infinity
+bb apple-containers run --name shared-service --cleanup manual alpine:3.23 -- sleep infinity
+bb apple-containers cleanup --dry-run --json
+bb apple-containers cleanup --json
+# Operator recovery for a particular owner thread:
+bb apple-containers cleanup --thread <owner-thread-id> --json
 bb apple-containers exec task-workspace -- uname -a
 bb apple-containers logs task-workspace --lines 100
 bb apple-containers inspect task-workspace --json
@@ -183,6 +217,13 @@ bb apple-containers workspace teardown --remove-volumes
 bb apple-containers workspace recreate
 ```
 
+`link-project <container-id> --project <project-id>` saves a project association
+for an existing BB-managed container. It updates plugin metadata without
+restarting the container or changing its volumes. Links survive plugin reloads
+and apply only to that container's creation date and image on the selected Mac;
+reusing the container name does not transfer the link. Existing workspace
+ownership takes precedence, and containers linked to another project are rejected.
+
 The low-level operational commands accept `--host <machine-id>` and `--json`. Outside a
 thread choose a host, set `defaultHostId`, or have exactly one enrolled machine.
 Workspace CLI commands accept `--environment <id>` instead of a host override;
@@ -200,9 +241,14 @@ Exec supports `--timeout` in seconds and `--workdir`.
   for the task; default mounts are read-only and ports bind to loopback.
 - Only containers bearing `app.getbb.apple-containers.managed=true` can be
   started, stopped, deleted or exec'd by default. `allowExternal` is an operator
-  setting. Inspect and logs may read external containers. Do not change the
-  setting to bypass protection without user intent.
-- Never stop/delete another task's container. No bulk prune or forced deletion
+  setting for external container control and shared image/volume cleanup.
+  Inspect and logs may read external containers. Do not change the setting to
+  bypass protection without user intent.
+- Reclaim only when the user directly asks to free Apple container disk space.
+  Stopped-container cleanup removes only stopped BB-managed containers and
+  keeps named volumes. Image cleanup affects the selected Mac's shared image
+  store. Unattached-volume cleanup permanently deletes data and needs explicit
+  user authorization; never use it as routine task cleanup. No forced deletion
   is exposed. Disabling the plugin does not stop containers.
 - Pull, build and run allow ten minutes. A timeout or cancellation terminates
   the CLI; guest commands and runtime operations may continue. Inspect state

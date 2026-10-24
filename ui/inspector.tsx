@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useRpc } from "@get-bb/plugin-sdk/app";
+import { useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import type {
   CommandResult,
   ContainerCommand,
@@ -8,7 +8,7 @@ import type {
 } from "../contract";
 import { parseCommand } from "../lib/argv";
 import { errorMessage, type Sample } from "./use-runtime";
-import { formatBytes, StateBadge, Symbol } from "./elements";
+import { formatBytes, publishedPort, StateBadge, Symbol } from "./elements";
 import { Monitor } from "./monitor";
 
 export function Inspector({
@@ -27,6 +27,25 @@ export function Inspector({
   samples: Sample[];
 }) {
   const rpc = useRpc<typeof rpcContract>();
+  const navigate = useBbNavigate();
+  const ports = c.ports.map((port) => ({
+    raw: port,
+    parsed: publishedPort(port),
+  }));
+  const portLink = (parsed: NonNullable<ReturnType<typeof publishedPort>>) => (
+    <a
+      className="ac-port-link"
+      href={parsed.url}
+      title={`Open in your browser (container port ${parsed.guest}/${parsed.protocol})`}
+      onClick={(event) => {
+        event.preventDefault();
+        navigate.openUrl(parsed.url);
+      }}
+    >
+      {parsed.label}
+      <Symbol name="external" size={12} />
+    </a>
+  );
   const [view, setView] = useState("overview"),
     [output, setOutput] = useState(""),
     [error, setError] = useState(""),
@@ -117,77 +136,84 @@ export function Inspector({
   return (
     <section className="ac-inspector" aria-label={`Details for ${c.id}`}>
       <header className="ac-detail-header">
-        <div
-          className={`ac-resource-icon ${c.state === "running" ? "ac-icon-green" : ""}`}
-        >
-          <Symbol name="cube" size={24} />
-        </div>
         <div className="ac-detail-name">
           <h2>{c.id}</h2>
-          <p title={c.image}>{c.image}</p>
+          <p>
+            <span className="ac-mono" title={c.image}>
+              {c.image}
+            </span>
+            <span
+              className="ac-detail-project"
+              title={
+                c.project
+                  ? `BB project: ${c.project.name}`
+                  : "No BB project linked to this container"
+              }
+            >
+              <Symbol name="projects" size={13} />
+              <span>{c.project?.name ?? "No project"}</span>
+            </span>
+            {c.state === "running" &&
+              ports[0]?.parsed &&
+              portLink(ports[0].parsed)}
+          </p>
         </div>
         <StateBadge state={c.state} />
       </header>
       <div className="ac-detail-actions">
         <button
-          className={`ac-button ${c.state === "running" ? "ac-button-stop" : "ac-button-primary"}`}
+          className={`ac-button ${c.state === "running" ? "" : "ac-button-primary"}`}
           disabled={busy || !canControl}
           onClick={() =>
             void act({ op: c.state === "running" ? "stop" : "start", id: c.id })
           }
         >
-          <Symbol name={c.state === "running" ? "stop" : "play"} size={13} />
+          <Symbol name={c.state === "running" ? "stop" : "play"} size={12} />
           {c.state === "running" ? "Stop" : "Start"}
         </button>
         <button
-          className="ac-button"
-          disabled={!canControl || c.state !== "running"}
-          onClick={() => setView("console")}
-        >
-          <Symbol name="terminal" size={15} />
-          Console
-        </button>
-        <button className="ac-button" onClick={() => setView("logs")}>
-          <Symbol name="logs" size={15} />
-          Logs
-        </button>
-        <button
-          className="ac-button ac-delete"
+          className="ac-button ac-button-quiet ac-delete"
+          aria-expanded={confirmDelete}
           disabled={busy || !canControl || c.state === "running"}
+          title={
+            c.state === "running" ? "Stop the container before deleting it" : ""
+          }
           onClick={() => setConfirmDelete((v) => !v)}
         >
           Delete
         </button>
       </div>
       {!canControl && (
-        <div className="ac-protected">
-          <Symbol name="shield" size={15} />
+        <p className="ac-protected">
+          <Symbol name="shield" size={14} />
           <span>
             Created outside BB. Controls are protected by the allowExternal
             setting.
           </span>
-        </div>
+        </p>
       )}
       {confirmDelete && (
-        <div className="ac-confirm">
+        <div className="ac-confirm" role="group" aria-label="Confirm delete">
           <p>
-            Delete <strong>{c.id}</strong> and its writable filesystem? Mounted
-            folders and named volumes remain.
+            Delete <strong className="ac-mono">{c.id}</strong> and its writable
+            filesystem? Mounted folders and named volumes are kept.
           </p>
-          <button
-            className="ac-button ac-delete"
-            disabled={busy}
-            onClick={() => void act({ op: "delete", id: c.id })}
-          >
-            Delete container
-          </button>
-          <button
-            className="ac-button"
-            onClick={() => setConfirmDelete(false)}
-            disabled={busy}
-          >
-            Cancel
-          </button>
+          <div>
+            <button
+              className="ac-button"
+              onClick={() => setConfirmDelete(false)}
+              disabled={busy}
+            >
+              Cancel
+            </button>
+            <button
+              className="ac-button ac-button-danger"
+              disabled={busy}
+              onClick={() => void act({ op: "delete", id: c.id })}
+            >
+              Delete container
+            </button>
+          </div>
         </div>
       )}
       <nav className="ac-detail-tabs" aria-label="Container views">
@@ -202,54 +228,74 @@ export function Inspector({
         {view === "overview" ? (
           <>
             <Monitor containers={[c]} samples={samples} compact />
-            <div className="ac-config">
-              <h3>Configuration</h3>
-              <dl>
+            <dl className="ac-spec">
+              <div>
                 <dt>Image</dt>
-                <dd>{c.image}</dd>
+                <dd className="ac-mono">{c.image}</dd>
+              </div>
+              <div>
                 <dt>CPUs</dt>
-                <dd>
-                  {c.cpus} {c.cpus === 1 ? "virtual CPU" : "virtual CPUs"}
-                </dd>
+                <dd>{c.cpus}</dd>
+              </div>
+              <div>
                 <dt>Memory limit</dt>
                 <dd>{formatBytes(c.memoryBytes)}</dd>
+              </div>
+              <div>
+                <dt>Processes</dt>
+                <dd>{stats?.numProcesses ?? "—"}</dd>
+              </div>
+              <div>
                 <dt>Created</dt>
                 <dd>
                   {c.createdAt
                     ? new Date(c.createdAt).toLocaleString()
                     : "Unavailable"}
                 </dd>
+              </div>
+              <div>
                 <dt>Ownership</dt>
                 <dd>{c.managed ? "Managed by BB" : "External container"}</dd>
-                <dt>Processes</dt>
-                <dd>{stats?.numProcesses ?? "—"}</dd>
-              </dl>
-            </div>
-            <div className="ac-config">
-              <h3>Networking</h3>
-              <dl>
+              </div>
+              <div>
                 <dt>Addresses</dt>
                 <dd>
                   {c.addresses.length
                     ? c.addresses.map((address) => (
-                        <div key={address} className="ac-mono">
+                        <span key={address} className="ac-mono ac-spec-item">
                           {address}
-                        </div>
-                      ))
-                    : "No active addresses"}
-                </dd>
-                <dt>Published ports</dt>
-                <dd>
-                  {c.ports.length
-                    ? c.ports.map((port) => (
-                        <span className="ac-port" key={port}>
-                          {port}
                         </span>
                       ))
                     : "None"}
                 </dd>
-              </dl>
-            </div>
+              </div>
+              <div>
+                <dt>Published ports</dt>
+                <dd>
+                  {ports.length
+                    ? ports.map(({ raw, parsed }) => (
+                        <span className="ac-spec-item" key={raw}>
+                          {parsed ? (
+                            <>
+                              {c.state === "running" ? (
+                                portLink(parsed)
+                              ) : (
+                                <span className="ac-mono">{parsed.label}</span>
+                              )}
+                              <span className="ac-spec-aside">
+                                to container port {parsed.guest}/
+                                {parsed.protocol}
+                              </span>
+                            </>
+                          ) : (
+                            <span className="ac-mono">{raw}</span>
+                          )}
+                        </span>
+                      ))
+                    : "None"}
+                </dd>
+              </div>
+            </dl>
           </>
         ) : (
           <>
@@ -260,10 +306,10 @@ export function Inspector({
                   size={14}
                 />
                 {view === "console"
-                  ? "Command console"
+                  ? "Runs in the container, 60-second limit"
                   : view === "logs"
                     ? "Last 200 lines"
-                    : "Container configuration"}
+                    : "Configuration reported by the runtime"}
               </span>
               {view === "logs" && (
                 <label>
@@ -272,7 +318,7 @@ export function Inspector({
                     checked={follow}
                     onChange={(e) => setFollow(e.target.checked)}
                   />
-                  Auto-refresh
+                  Refresh every 4 seconds
                 </label>
               )}
               {view !== "console" && (
@@ -345,19 +391,11 @@ export function Inspector({
                     c.state !== "running"
                   }
                 >
-                  <Symbol name="arrow" size={17} />
+                  <Symbol name="arrow" size={16} />
                 </button>
               </form>
             )}
-            <p className="ac-output-note">
-              {loading
-                ? "Running…"
-                : view === "console"
-                  ? "Commands run in the container. Timeout: 60 seconds."
-                  : view === "logs"
-                    ? "Auto-refresh fetches a new tail every four seconds."
-                    : "Raw configuration reported by Apple’s container runtime."}
-            </p>
+            {loading && <p className="ac-output-note">Running…</p>}
           </>
         )}
       </div>

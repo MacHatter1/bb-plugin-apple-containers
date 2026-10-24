@@ -15,6 +15,7 @@ export function useRuntime() {
   const [data, setData] = useState<Snapshot | null>(null),
     [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
+    [noticeDetails, setNoticeDetails] = useState(""),
     [busy, setBusy] = useState(false),
     [refreshing, setRefreshing] = useState(false);
   const activeHost = useRef(hostId),
@@ -67,6 +68,7 @@ export function useRuntime() {
     setData(null);
     setError("");
     setNotice("");
+    setNoticeDetails("");
     void refresh();
     const timer = setInterval(() => {
       if (document.visibilityState !== "hidden") void refresh();
@@ -86,6 +88,7 @@ export function useRuntime() {
     setBusy(true);
     setError("");
     setNotice("");
+    setNoticeDetails("");
     try {
       const result = await rpc.call("perform", { hostId: target, command });
       if (activeHost.current !== target) return result.ok;
@@ -100,8 +103,27 @@ export function useRuntime() {
             ? `Pulled ${command.image}.`
             : command.op === "delete"
               ? `Deleted ${command.id}.`
-              : "Operation completed.",
+              : command.op === "reclaim"
+                ? {
+                    "stopped-containers":
+                      "Stopped BB container cleanup completed.",
+                    "dangling-images": "Dangling image cleanup completed.",
+                    "unused-images": "Unused image cleanup completed.",
+                    "unattached-volumes":
+                      "Unattached volume cleanup completed.",
+                  }[command.target]
+                : "Operation completed.",
       );
+      if (command.op === "reclaim")
+        setNoticeDetails(
+          [
+            result.stdout.trim(),
+            result.stderr.trim(),
+            result.truncated ? "Output was truncated." : "",
+          ]
+            .filter(Boolean)
+            .join("\n"),
+        );
       await refresh();
       return true;
     } catch (cause) {
@@ -120,6 +142,7 @@ export function useRuntime() {
     data,
     error,
     notice,
+    noticeDetails,
     busy,
     refreshing,
     refresh,

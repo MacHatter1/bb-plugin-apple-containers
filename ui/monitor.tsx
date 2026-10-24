@@ -1,8 +1,9 @@
 import type { ContainerSummary } from "../contract";
-import { Chart, formatBytes, Symbol } from "./elements";
+import { Chart, formatBytes, niceBytes, niceCeiling } from "./elements";
 import type { Sample } from "./use-runtime";
 
 const sum = (items: number[]) => items.reduce((a, b) => a + b, 0);
+/** Small multiples: one lane per resource, one ink, one shared time axis. */
 export function Monitor({
   containers,
   samples,
@@ -15,12 +16,9 @@ export function Monitor({
   const ids = new Set(containers.map((c) => c.id));
   const latest = samples.at(-1);
   const active = latest?.containers.filter((c) => ids.has(c.id)) ?? [];
-  const cpus = sum(
-    containers.filter((c) => c.state === "running").map((c) => c.cpus),
-  );
-  const memoryLimit = sum(
-    containers.filter((c) => c.state === "running").map((c) => c.memoryBytes),
-  );
+  const running = containers.filter((c) => c.state === "running");
+  const cpus = sum(running.map((c) => c.cpus));
+  const memoryLimit = sum(running.map((c) => c.memoryBytes));
   const series = (key: "cpu" | "rx" | "tx" | "read" | "write") =>
     samples
       .filter((s) => key !== "cpu" || [...ids].some((id) => s.cpu[id] != null))
@@ -39,83 +37,69 @@ export function Monitor({
     );
   const rx = series("rx"),
     read = series("read");
-  const memoryNow = sum(active.map((c) => c.memoryUsageBytes));
-  const cards = [
+  const rate = (values: number[]) => `${formatBytes(values.at(-1) ?? 0)}/s`;
+  const peak = (values: number[]) => Math.max(0, ...values);
+  const cpuCeiling = Math.min(100, niceCeiling(Math.max(5, peak(cpu) * 1.2)));
+  const rateCeiling = (values: number[]) =>
+    niceBytes(Math.max(1024, peak(values) * 1.2));
+  const lanes = [
     {
       name: "CPU",
-      icon: "cpu" as const,
-      color: "var(--ac-blue)",
       value: cpu.length ? `${cpu.at(-1)!.toFixed(1)}%` : "—",
-      hint: `${cpus} ${cpus === 1 ? "vCPU" : "vCPUs"} allocated`,
+      hint: `of ${cpus} ${cpus === 1 ? "vCPU" : "vCPUs"}`,
       series: cpu,
-      ceiling: 100,
-      progress: cpu.at(-1) ?? 0,
+      ceiling: cpuCeiling,
+      scale: `${cpuCeiling}%`,
     },
     {
       name: "Memory",
-      icon: "memory" as const,
-      color: "var(--ac-purple)",
-      value: latest ? formatBytes(memoryNow) : "—",
-      hint: `${formatBytes(memoryLimit)} allocated`,
+      value: latest
+        ? formatBytes(sum(active.map((c) => c.memoryUsageBytes)))
+        : "—",
+      hint: `of ${formatBytes(memoryLimit)} allocated`,
       series: memory,
       ceiling: Math.max(memoryLimit, 1),
-      progress: memoryLimit ? (memoryNow / memoryLimit) * 100 : 0,
+      scale: formatBytes(memoryLimit),
     },
     {
       name: "Network",
-      icon: "network" as const,
-      color: "var(--ac-green)",
-      value: latest ? `${formatBytes(rx.at(-1) ?? 0)}/s` : "—",
-      hint: `Receive · ${formatBytes(series("tx").at(-1) ?? 0)}/s sent`,
+      value: latest ? rate(rx) : "—",
+      hint: `received, ${rate(series("tx"))} sent`,
       series: rx,
-      ceiling: undefined,
-      progress: undefined,
+      ceiling: rateCeiling(rx),
+      scale: `${formatBytes(rateCeiling(rx))}/s`,
     },
     {
-      name: "Disk I/O",
-      icon: "volume" as const,
-      color: "var(--ac-pink)",
-      value: latest ? `${formatBytes(read.at(-1) ?? 0)}/s` : "—",
-      hint: `Read · ${formatBytes(series("write").at(-1) ?? 0)}/s written`,
+      name: "Disk",
+      value: latest ? rate(read) : "—",
+      hint: `read, ${rate(series("write"))} written`,
       series: read,
-      ceiling: undefined,
-      progress: undefined,
+      ceiling: rateCeiling(read),
+      scale: `${formatBytes(rateCeiling(read))}/s`,
     },
   ];
   return (
-    <div className={`ac-monitor ${compact ? "ac-monitor-compact" : ""}`}>
-      {cards.map((card) => (
-        <section className="ac-metric" key={card.name}>
-          <div className="ac-metric-title">
-            <Symbol name={card.icon} size={15} />
-            <h3>{card.name}</h3>
-            <i style={{ background: card.color }} />
-          </div>
-          <div className="ac-metric-number">{card.value}</div>
-          <div className="ac-metric-hint">{card.hint}</div>
-          {card.progress !== undefined && (
-            <div className="ac-meter">
-              <span
-                style={{
-                  width: `${Math.min(100, card.progress)}%`,
-                  background: card.color,
-                }}
-              />
-            </div>
-          )}
+    <div className={`ac-lanes ${compact ? "ac-lanes-compact" : ""}`}>
+      {lanes.map((lane) => (
+        <section className="ac-lane" key={lane.name} aria-label={lane.name}>
+          <h3>{lane.name}</h3>
+          <div className="ac-lane-value">{lane.value}</div>
+          <div className="ac-lane-hint">{lane.hint}</div>
           <Chart
-            values={card.series}
-            ceiling={card.ceiling}
-            color={card.color}
-            label={`${card.name} history from runtime samples`}
+            values={lane.series}
+            ceiling={lane.ceiling}
+            scale={lane.scale}
+            label={`${lane.name} over the last five minutes`}
             idleMessage={
-              containers.some((c) => c.state === "running")
-                ? "Waiting for samples…"
-                : "No running containers"
+              running.length ? "Waiting for samples…" : "Not running"
             }
           />
         </section>
       ))}
+      <p className="ac-lanes-axis" aria-hidden="true">
+        <span>5 min ago</span>
+        <span>Now</span>
+      </p>
     </div>
   );
 }

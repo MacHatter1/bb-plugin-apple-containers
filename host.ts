@@ -1,8 +1,11 @@
 import { experimental_defineHostEntry } from "@get-bb/plugin-sdk/host";
 import { hostContract } from "./contract";
+import { cleanupAgentContainers } from "./lib/agent-containers";
+import { withOwnerLock } from "./lib/container-ownership";
 import {
   checkMounts,
   createRunner,
+  parseDiskUsage,
   perform,
   snapshot,
   metrics,
@@ -16,6 +19,18 @@ import {
 export default experimental_defineHostEntry({
   contract: hostContract,
   handlers: {
+    async cleanupContainers({ config, owner, dryRun }, ctx) {
+      if (process.platform !== "darwin" || process.arch !== "arm64")
+        throw new Error(
+          "Select an Apple silicon Mac to clean up agent containers.",
+        );
+      return cleanupAgentContainers(
+        owner,
+        dryRun,
+        await createRunner(config),
+        AbortSignal.any([ctx.signal, ctx.lifecycle.signal]),
+      );
+    },
     async workspaceTarget(identity, ctx) {
       return readWorkspaceTarget(
         identity,
@@ -92,6 +107,13 @@ export default experimental_defineHostEntry({
         AbortSignal.any([ctx.signal, ctx.lifecycle.signal]),
       );
     },
+    async diskUsage(config, ctx) {
+      const signal = AbortSignal.any([ctx.signal, ctx.lifecycle.signal]);
+      const runner = await createRunner(config);
+      return parseDiskUsage(
+        await runner(["system", "df", "--format", "json"], 30_000, signal),
+      );
+    },
     async snapshot(config, ctx) {
       const signal = AbortSignal.any([ctx.signal, ctx.lifecycle.signal]);
       // Report a missing binary in the dashboard without failing plugin load.
@@ -104,16 +126,22 @@ export default experimental_defineHostEntry({
       }));
       return snapshot(config, runner, signal);
     },
-    async perform({ config, command }, ctx) {
+    async perform({ config, command, owner }, ctx) {
       if (process.platform !== "darwin" || process.arch !== "arm64")
         throw new Error("Select an Apple silicon Mac to use Apple containers.");
       await checkMounts(command);
-      return perform(
-        command,
-        config,
-        await createRunner(config),
-        AbortSignal.any([ctx.signal, ctx.lifecycle.signal]),
-      );
+      const run = async () =>
+        perform(
+          command,
+          config,
+          await createRunner(config),
+          AbortSignal.any([ctx.signal, ctx.lifecycle.signal]),
+          owner,
+        );
+      return owner &&
+        ["run", "exec", "start", "stop", "delete"].includes(command.op)
+        ? withOwnerLock(owner, run)
+        : run();
     },
   },
 });

@@ -1,5 +1,88 @@
 # Verification
 
+## Reclaim and inventory corrections
+
+Verified on 24 October 2026:
+
+- 151 automated tests passed; the two opt-in live-container tests remain skipped.
+  Type checking, formatting, SDK 0.6.49 compatibility, the plugin build and
+  `git diff --check` passed.
+- Reclaim regressions replace a later target during an earlier deletion and
+  check external replacements, instance and creation changes, ownership changes,
+  restarted containers, unavailable/clipped inspections and missing identity.
+  Name locks keep standalone and workspace launches outside reclaim's
+  inspection/deletion pair, and are shared with standalone cleanup.
+- Inventory checks use configured network and named-volume references, including
+  stopped/external users and volumes shared across workspaces. A surviving app
+  no longer hides an unattached database volume. Project IDs keep identically
+  named projects separate, including resources left after container removal.
+- Rebuilt and reloaded the installed plugin. Saved read-only UI suite
+  `suite_a8cdc35d` passed both flows: dashboard/navigation `run_b6ba77b4` (98)
+  and Storage/cleanup confirmation `run_8a240ec0` (97).
+  Both flows' initial navigation used a healed selector; the remaining eight
+  dashboard steps and six Storage steps passed directly.
+- Race checks use the fake CLI; live checks did not delete containers or volumes.
+  Name locks coordinate this host worker's operations. Apple CLI deletion remains
+  name-based and does not offer an atomic identity-conditional delete against
+  unrelated CLI processes.
+
+## Current dashboard and Containers grouping
+
+Verified on 24 October 2026 after the dashboard redesign:
+
+- The full suite passes 129 tests across 11 files, including a fresh module-cache
+  run; the two opt-in live-container tests remain skipped. Type checking,
+  formatting, SDK compatibility, the plugin build and `git diff --check` pass.
+- UI tests use the current navigation, status and action labels. The app is
+  loaded in suite setup so cold component imports do not consume the first
+  interaction test's timeout.
+- Dashboard and Containers tests verify alphabetical project groups, membership
+  across running and stopped containers, group counts, unassigned containers
+  last, project search combined with state filters, and project names in details.
+  Separate projects with the same name remain separate and sort by project ID.
+- Rebuilt and reloaded the installed plugin. Current saved dashboard regression
+  `flow_6c518182`, run `run_54fb9a26`, passed 9/9 (score 98). Its initial page load
+  needed one readiness retry; all eight subsequent interactions passed directly.
+  Navigation, the creation form's cancellation, search and monitoring were
+  checked without starting or changing containers.
+- The older saved dashboard/grouping plans still reference removed UI labels
+  and Learn Anything containers that are no longer in the live inventory. Their
+  reruns (`run_125e4506`, `run_50f042ca`) fail those stale assertions. The QA API
+  does not support editing expected text, so the current dashboard flow above
+  replaces that plan while retaining the original run history.
+- The installed Dashboard bundle was also mounted with explicitly labelled,
+  browser-only sample RPC responses. Learn Anything's app and stopped database,
+  a second project and an unassigned container grouped correctly in both views.
+  Project search, the Stopped filter and the details project name passed browser
+  assertions; neither view overflowed at 1280 pixels. All mutation RPCs were
+  blocked in this sample check. This verifies rendering, not another live
+  container lifecycle run. The real inventory contained only Jev and buildkit;
+  neither was changed.
+
+## Standalone agent cleanup
+
+Verified on 24 October 2026:
+
+- 108 backend/runtime tests passed, including 14 new checks for agent cleanup.
+  Type checking, the plugin build, SDK compatibility, formatting of the affected
+  backend/test files and `git diff --check` passed.
+- Installed CLI verification created two uniquely named, 256 MiB Alpine
+  containers in this thread: one with task cleanup and one with manual cleanup.
+  Both recorded the correct owning thread and Apple Containers project.
+- After plugin reload, the dry run selected only the task container and retained
+  the manual container. Cleanup removed the task container; repeating it removed
+  nothing and left the manual container running. The manual fixture was then
+  explicitly stopped/deleted. Final cleanup reported no remaining owned task or
+  manual containers. Existing Jev and builder containers kept their identities
+  and running states. Shared images were kept.
+- Automated checks cover persisted Mac targets after a lost launch response,
+  offline-host retries, caller scope, legacy/shared/manual exclusions, instance
+  replacements, in-flight commands, failed and lost stop/delete outcomes,
+  idempotence, clipped inventory and tool disablement.
+- The earlier UI failures during the concurrent dashboard changes are covered
+  by the current dashboard verification above. The disposable live container
+  checks here exercise cleanup directly.
+
 Verified locally on 20 October 2026 with BB Plugin SDK 0.6.49, Apple container CLI
 1.5.0, Apple silicon and macOS 26.6.
 

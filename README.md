@@ -31,7 +31,7 @@ You want a Linux workspace without losing track of what is running on your Mac. 
 | ------------------------- | ---------------------------------------------------------------------- |
 | Runtime visibility        | Health, inventory and live resource charts                             |
 | A container workspace     | Searchable source list, inspector, logs and command console            |
-| Agent access              | Ten native tools, a CLI and a bundled skill                            |
+| Agent access              | Twelve native tools, a CLI and a bundled skill                        |
 | Correct machine targeting | Commands run on the thread’s environment host, with explicit overrides |
 | Project environments      | One project setup, with separate containers and data for each worktree |
 
@@ -62,7 +62,7 @@ Inspect configuration, read logs and run commands from a focused source list.
 ### 🖼️ Image library
 
 Pull OCI images, build a Dockerfile on the selected Mac, or run a local image.
-Browse networks and named volumes without bulk removal controls.
+Browse local images, networks and named volumes.
 
 </td>
 <td valign="top">
@@ -134,11 +134,12 @@ Open **Apple Containers** in BB’s navigation. New provider sessions receive th
 
 | Where                                               | What                                                                                          |
 | --------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| **Apple Containers → Dashboard**                    | Runtime health, inventories and recent resource history                                       |
+| **Apple Containers → Dashboard**                    | Every container as a box in its project's bay, live resource use and cleanup suggestions      |
 | **Containers**                                      | Source list, live inspector, logs, command console and raw configuration                      |
 | **Images**                                          | Pull, build and run images                                                                    |
 | **Apple Containers → Projects**                     | Save project setups and start, inspect, stop or replace workspace instances                   |
-| **Volumes / Networks**                              | Read-only local inventory                                                                     |
+| **Storage**                                         | Review runtime disk estimates and reclaim stopped containers, unused images or unattached volumes |
+| **Volumes / Networks**                              | Read-only inventory grouped by project, with unused workspace leftovers named and tagged      |
 | **Settings → Installed plugins → Apple Containers** | Machine default, executable and control settings                                              |
 | **Thread header → Containers**                      | This checkout/worktree’s live container status, services, ports, logs and start/stop controls |
 
@@ -185,9 +186,9 @@ and BB environment IDs, rather than the branch name. Project settings apply
 across Macs, while instances, mounted files, ports and data stay on their Mac.
 
 Configured threads show a cube badge beside the workspace controls. It reports
-Checking, Not started, Starting, Running, Stopping, Stopped, Needs attention, or Unavailable
+Checking, Not started, Starting, Running, Stopping, Stopped, Not running, Needs attention, or Unavailable
 from the workspace's observed container state. Click it for service images,
-ports, persistent volume counts, logs, and Start / reuse or Stop controls.
+ports, persistent volume counts, logs, and Start or Stop controls.
 Open dashboard selects that project, environment and Mac. On narrow screens the
 badge collapses to an accessible cube icon. Status reads never start containers;
 Running describes the containers, so check app readiness before opening its URL.
@@ -201,7 +202,7 @@ there. With **Start when an agent begins work**, thread activity starts the
 stack in the background. Project-specific instructions tell agents to await
 `apple_workspace` before running app commands. Startup and explicit commands
 are serialised per workspace, so concurrent threads reuse one instance.
-If automatic startup fails, the agent tool or **Start / reuse** reports the error.
+If automatic startup fails, the agent tool or **Start** reports the error.
 Worktree Git metadata can live outside the mounted folder, so tooling that
 requires Git metadata must run on the Mac or receive version information from it.
 
@@ -286,7 +287,7 @@ errors may leave a partial stack; inspect status and preview before retrying.
 ## Safe by default
 
 - **Ownership protection.** Start, stop, delete and exec require `app.getbb.apple-containers.managed=true` by default. Reads include external containers. This is an accidental-change guard for a shared Mac user, not an isolation boundary between agents.
-- **Explicit access.** Manual mounts default to read-only; project app containers mount their workspace read/write. Published ports bind to `127.0.0.1`. No host shell, implicit environment inheritance into guests, SSH forwarding, bulk prune or forced container deletion is exposed.
+- **Explicit access.** Manual mounts default to read-only; project app containers mount their workspace read/write. Published ports bind to `127.0.0.1`. No host shell, implicit environment inheritance into guests, SSH forwarding or forced container deletion is exposed. Image and volume cleanup requires the external-resource setting and per-action confirmation. Volume cleanup also requires a separate acknowledgment that unattached data will be deleted.
 - **Predictable lifetime.** Disabling/reloading the plugin leaves containers running. No Apple software or kernel is installed automatically.
 - **Bounded output.** Processes retain 256 KiB across stdout/stderr. Dashboard lists retain 500 records each; tool responses retain 48,000 characters. Clipping is labelled, and clipped JSON is rejected.
 - **Cancellation.** Timeout/cancellation terminates and reaps the CLI. A guest command or runtime operation may continue; inspect state before retrying. Mutations are not automatically retried. Run, pull and build allow ten minutes; exec defaults to 60 seconds, configurable from 1–600.
@@ -301,6 +302,10 @@ bb apple-containers exec workspace -- sh -lc 'uname -a; pwd'
 bb apple-containers logs workspace --lines 100
 bb apple-containers stop workspace
 bb apple-containers delete workspace
+bb apple-containers reclaim stopped-containers --confirm
+bb apple-containers reclaim dangling-images --confirm
+bb apple-containers reclaim unused-images --confirm
+bb apple-containers reclaim unattached-volumes --confirm --delete-data
 ```
 
 <details>
@@ -311,12 +316,18 @@ bb apple-containers delete workspace
 | `hosts`                                 | List BB machine IDs                                           |
 | `status`                                | Runtime health and complete inventory snapshot                |
 | `list`                                  | List running and stopped containers                           |
+| `link-project <id> --project <project-id>` | Save a project link for an existing managed container without restarting it |
+| `cleanup [--thread <id>] [--dry-run]` | Remove a thread's task containers across recorded Macs; retain manual containers and volumes |
 | `run <image> --name <name> -- [argv…]`  | Create a detached managed container                           |
 | `exec <id> -- [argv…]`                  | Execute a command in a managed container                      |
 | `logs <id> --lines 200`                 | Read the log tail                                             |
 | `inspect <id>` / `stats <id>`           | Read configuration or one resource snapshot                   |
 | `start <id>` / `stop <id>`              | Control one container                                         |
 | `delete <id>`                           | Delete one stopped container                                  |
+| `reclaim stopped-containers --confirm`  | Remove stopped BB-managed containers; keep named volumes      |
+| `reclaim dangling-images --confirm`     | Remove untagged images; requires external-resource setting     |
+| `reclaim unused-images --confirm`       | Remove unreferenced images; requires external-resource setting |
+| `reclaim unattached-volumes --confirm --delete-data` | Delete unattached volumes and their data; requires external-resource setting |
 | `pull <image>`                          | Pull an OCI image                                             |
 | `build /absolute/context --tag app:dev` | Build from a Dockerfile                                       |
 | `system start`                          | Start the service without automatically installing a kernel   |
@@ -331,7 +342,14 @@ Low-level operational commands accept `--host <id>` and `--json`. Workspace comm
 
 </details>
 
-**Agent tools:** `apple_container_status`, `apple_container_run`, `apple_container_exec`, `apple_container_read`, `apple_container_manage`, `apple_container_image`, `apple_workspace_setup`, `apple_workspace`, `apple_workspace_exec`, `apple_workspace_teardown`. The six low-level tools accept optional `hostId`; workspace tools always use the invoking thread's project and environment. The bundled [skill](skills/apple-containers/SKILL.md) documents setup, cleanup, schemas, CLI use, limits and operating rules.
+**Agent tools:** `apple_container_status`, `apple_container_run`, `apple_container_exec`, `apple_container_read`, `apple_container_manage`, `apple_container_image`, `apple_container_reclaim`, `apple_workspace_setup`, `apple_workspace`, `apple_workspace_exec`, `apple_workspace_teardown`. Low-level tools accept optional `hostId`; workspace tools always use the invoking thread's project and environment. The bundled [skill](skills/apple-containers/SKILL.md) documents setup, cleanup, schemas, CLI use, limits and operating rules.
+
+The Storage view uses Apple’s runtime disk estimates. It removes only
+BB-managed stopped containers by default. Image cleanup can remove shared image
+caches; unattached-volume cleanup permanently deletes volume data. Those shared
+cleanup actions are gated by `allowExternal`. Select an action to review and
+enable that permission directly in the dialog, then confirm the cleanup
+separately. Volume cleanup also needs a data-loss acknowledgment.
 
 The dashboard command fields support quoted arguments without shell expansion. For shell pipelines or scripts, explicitly enter `sh -lc 'your script'`. The console runs individual commands; it is not an interactive PTY.
 
@@ -346,7 +364,7 @@ Use `bb plugin config apple-containers` or **Settings → Installed plugins → 
 | ------------------ | ------- | ---------------------------------------------------------------------------------------- |
 | `binaryPath`       | Empty   | Auto-detect the CLI on each Mac, or use an absolute executable path                      |
 | `defaultHostId`    | Empty   | Default for CLI calls outside a thread when multiple machines exist                      |
-| `allowExternal`    | `false` | Permit start/stop/delete/exec on containers created outside this plugin                  |
+| `allowExternal`    | `false` | Permit control of external containers and image/volume cleanup on the selected Mac      |
 | `enableAgentTools` | `true`  | Select native tools for new sessions; false also rejects existing tool calls immediately |
 
 Settings apply without reloading. Disabling native tools leaves the dashboard and CLI usable.

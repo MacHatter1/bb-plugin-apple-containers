@@ -1,7 +1,9 @@
-import type { CSSProperties, ReactNode } from "react";
+import type { ReactNode } from "react";
 export type SymbolName =
   | "cube"
   | "dashboard"
+  | "projects"
+  | "storage"
   | "images"
   | "volume"
   | "network"
@@ -19,6 +21,7 @@ export type SymbolName =
   | "chevron"
   | "shield"
   | "arrow"
+  | "external"
   | "build";
 const paths: Record<SymbolName, ReactNode> = {
   cube: (
@@ -32,6 +35,18 @@ const paths: Record<SymbolName, ReactNode> = {
       <rect x="14" y="3" width="7" height="7" rx="1.5" />
       <rect x="3" y="14" width="7" height="7" rx="1.5" />
       <rect x="14" y="14" width="7" height="7" rx="1.5" />
+    </>
+  ),
+  projects: (
+    <>
+      <path d="M3.5 7.5V6a2 2 0 0 1 2-2h4l2 2h6.75a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5.5a2 2 0 0 1-2-2z" />
+      <path d="m10 12.5-1.5 1.5L10 15.5m4-3 1.5 1.5-1.5 1.5m-2.25-2.5-1.5 3" />
+    </>
+  ),
+  storage: (
+    <>
+      <rect x="3" y="5" width="18" height="14" rx="2.5" />
+      <path d="M3 14h18m-13.5 3h.01m3.49 0h.01" />
     </>
   ),
   images: (
@@ -99,6 +114,7 @@ const paths: Record<SymbolName, ReactNode> = {
     </>
   ),
   arrow: <path d="M5 12h14m-5-5 5 5-5 5" />,
+  external: <path d="M8 16 16 8m-6.5 0H16v6.5" />,
   build: (
     <>
       <path d="m14 4 6 6-3 3-6-6zM12 12 4 20m2-2-2-2" />
@@ -144,25 +160,70 @@ export function Empty({
 }) {
   return (
     <div className="ac-empty">
-      <div className="ac-empty-icon">
-        <Symbol name={icon} size={30} />
-      </div>
+      <Symbol name={icon} size={28} className="ac-empty-icon" />
       <h3>{title}</h3>
       <p>{children}</p>
       {action}
     </div>
   );
 }
+export type StateTone = "running" | "stopped" | "busy" | "attention";
+export const stateTone = (state: string): StateTone =>
+  state === "running"
+    ? "running"
+    : state === "stopped" || state === "not started"
+      ? "stopped"
+      : state === "starting" || state === "stopping"
+        ? "busy"
+        : "attention";
+export const stateLabel = (state: string) =>
+  `${state[0]?.toUpperCase() ?? ""}${state.slice(1)}`;
+/** Filled for running, a ring for stopped, a dash while changing and a
+ * diamond for anything unexpected, so state never depends on colour alone. */
+export function Lamp({ state, tone }: { state: string; tone?: StateTone }) {
+  return (
+    <i
+      className="ac-lamp"
+      data-tone={tone ?? stateTone(state)}
+      aria-hidden="true"
+    />
+  );
+}
 export function StateBadge({ state }: { state: string }) {
   return (
-    <span
-      className={`ac-state ${state === "running" ? "ac-state-running" : ""}`}
-    >
-      <i />
-      {state[0]?.toUpperCase()}
-      {state.slice(1)}
+    <span className="ac-state" data-tone={stateTone(state)}>
+      <Lamp state={state} />
+      {stateLabel(state)}
     </span>
   );
+}
+export const shortImage = (reference: string) =>
+  reference.replace(/^docker\.io\/library\//, "");
+/** Parses the runtime's `address:host:container/proto` published-port form. */
+export function publishedPort(value: string) {
+  const match = /^(.*):(\d+):(\d+)(?:\/(\w+))?$/.exec(value);
+  if (!match) return null;
+  const address = match[1] === "0.0.0.0" ? "127.0.0.1" : match[1]!;
+  return {
+    host: Number(match[2]),
+    guest: Number(match[3]),
+    protocol: match[4] ?? "tcp",
+    url: `http://${address === "127.0.0.1" ? "localhost" : address}:${match[2]}`,
+    label: `${address === "127.0.0.1" ? "localhost" : address}:${match[2]}`,
+  };
+}
+/** Rounds an axis ceiling up to 1, 2 or 5 times a power of ten. */
+export function niceCeiling(value: number) {
+  if (value <= 0) return 1;
+  const power = 10 ** Math.floor(Math.log10(value));
+  return ([1, 2, 5, 10].find((step) => step * power >= value) ?? 10) * power;
+}
+/** The same, in whole binary units so labels read 2 KiB rather than 2.1 KiB. */
+export function niceBytes(value: number) {
+  const unit =
+    1024 **
+    Math.max(0, Math.floor(Math.log(Math.max(value, 1)) / Math.log(1024)));
+  return niceCeiling(value / unit) * unit;
 }
 export const formatBytes = (value: number): string => {
   if (value === 0) return "0 B";
@@ -172,61 +233,56 @@ export const formatBytes = (value: number): string => {
   );
   return `${(value / 1024 ** power).toFixed(power > 1 ? 1 : 0)} ${["B", "KiB", "MiB", "GiB", "TiB"][power]}`;
 };
+/** Matches the 60 samples, five seconds apart, kept by useMetrics. */
+export const CHART_SLOTS = 60;
 export function Chart({
   values,
-  color = "var(--ac-blue)",
   label,
   ceiling,
+  scale,
   idleMessage = "Waiting for samples…",
 }: {
   values: number[];
-  color?: string;
   label: string;
-  ceiling?: number;
+  ceiling: number;
+  /** The ceiling as text, shown at the top of the axis. */
+  scale: string;
   idleMessage?: string;
 }) {
-  const max = ceiling || Math.max(1, ...values) * 1.25;
-  const points = values.map(
-    (v, i) =>
-      `${values.length === 1 ? 500 : (i / (values.length - 1)) * 500},${106 - Math.min(1, Math.max(0, v / max)) * 96}`,
-  );
+  const max = ceiling;
+  // Samples occupy fixed slots ending at "now", so a short history fills in
+  // from the right instead of stretching across the whole time axis.
+  const offset = Math.max(0, CHART_SLOTS - values.length);
+  const x = (i: number) => ((offset + i) / (CHART_SLOTS - 1)) * 500;
+  const points = values
+    .slice(-CHART_SLOTS)
+    .map((v, i) => `${x(i)},${98 - Math.min(1, Math.max(0, v / max)) * 90}`);
   return (
-    <div
-      className="ac-chart"
-      style={{ "--chart-color": color } as CSSProperties}
-      role="img"
-      aria-label={label}
-    >
-      <svg viewBox="0 0 500 115" preserveAspectRatio="none">
-        <path
-          className="ac-chart-grid"
-          d="M0 10H500M0 42H500M0 74H500M0 106H500"
-        />
+    <div className="ac-chart" role="img" aria-label={label}>
+      <svg viewBox="0 0 500 100" preserveAspectRatio="none">
+        <path className="ac-chart-base" d="M0 99.5H500" />
         {values.length > 1 && (
           <>
             <polygon
-              fill="currentColor"
-              opacity=".09"
-              points={`0,112 ${points.join(" ")} 500,112`}
+              className="ac-chart-area"
+              points={`${x(0)},100 ${points.join(" ")} 500,100`}
             />
             <polyline
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
+              className="ac-chart-line"
               vectorEffect="non-scaling-stroke"
-              strokeLinejoin="round"
               points={points.join(" ")}
             />
           </>
         )}
       </svg>
-      {values.length < 2 && (
-        <span>{values.length ? "Collecting live samples…" : idleMessage}</span>
+      {values.length > 1 && (
+        <small className="ac-chart-scale" aria-hidden="true">
+          {scale}
+        </small>
       )}
-      <div className="ac-chart-axis">
-        <span>Recent samples</span>
-        <span>Now</span>
-      </div>
+      {values.length < 2 && (
+        <span>{values.length ? "Collecting samples…" : idleMessage}</span>
+      )}
     </div>
   );
 }
